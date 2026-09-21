@@ -103,19 +103,37 @@ describe('volatility seasonality', () => {
 });
 
 describe('price behaviour', () => {
-  it('stays in a plausible band over 30 simulated days', () => {
+  it('stays in a plausible band and keeps a crypto-like volatility', () => {
     const sim = new MarketSimulator(cfg(4242));
     const r = makeSecondResult(4);
     let min = Number.POSITIVE_INFINITY;
     let max = 0;
-    // Sample a day per week to keep the test fast but still wide-ranging.
-    for (let i = 0; i < 30 * 86400; i++) {
-      sim.stepSecond(r);
-      if (r.close < min) min = r.close;
-      if (r.close > max) max = r.close;
+    let prevDayClose = DEFAULT_START_PRICE_CENTS;
+    const dailyReturns: number[] = [];
+
+    const days = 30;
+    for (let d = 0; d < days; d++) {
+      for (let i = 0; i < 86400; i++) {
+        sim.stepSecond(r);
+        if (r.close < min) min = r.close;
+        if (r.close > max) max = r.close;
+      }
+      dailyReturns.push(Math.log(r.close / prevDayClose));
+      prevDayClose = r.close;
     }
-    // A 65%-vol asset over a month should move a lot but not by 10x.
+
+    // A volatile asset over a month should move a lot, but not by 4x.
     expect(min).toBeGreaterThan(DEFAULT_START_PRICE_CENTS / 4);
     expect(max).toBeLessThan(DEFAULT_START_PRICE_CENTS * 4);
+
+    const mean = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
+    const variance =
+      dailyReturns.reduce((a, b) => a + (b - mean) ** 2, 0) / (dailyReturns.length - 1);
+    const annualised = Math.sqrt(variance) * Math.sqrt(365);
+    // Roughly where a liquid crypto pair actually trades. The band is wide
+    // because it is one sample path, but it will catch a tuning mistake that
+    // turns the market into a flatline or a rocket.
+    expect(annualised).toBeGreaterThan(0.45);
+    expect(annualised).toBeLessThan(1.8);
   }, 60_000);
 });

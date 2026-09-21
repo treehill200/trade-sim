@@ -6,8 +6,8 @@ single-page web app with an interface modelled on a professional charting termin
 Everything is simulated: the prices, the order book, the fills and the account. There is no real
 market data, no real money, and no server. It all runs in your browser.
 
-> **Build status:** Phase 1 of 7 is complete — the market engine and the chart. The trading side
-> (orders, positions, PnL) arrives in later phases. See `DECISIONS.md` for the running log of
+> **Build status:** Phases 1-2 of 7 are complete — the market engine and the chart. The trading
+> side (orders, positions, PnL) arrives in later phases. See `DECISIONS.md` for the running log of
 > technical choices.
 
 ## Running it
@@ -41,6 +41,8 @@ later visit opens almost instantly.
   times a second, so the newest candle is always alive.
 - **Switch timeframes** — 1s through 1D, from the buttons in the top bar or the dropdown next to
   them.
+- **Switch chart types** — candles, hollow candles, OHLC bars, Heikin Ashi, line and area, from the
+  chart-type menu in the middle of the top bar.
 - **Pan** by dragging the chart, **zoom** with the scroll wheel or a trackpad pinch.
 - **Rescale the price axis** by dragging it up or down; **double-click it** to go back to
   auto-scaling. Double-click the chart itself to reset the whole view.
@@ -48,6 +50,9 @@ later visit opens almost instantly.
   are pointing at.
 - **Jump back to the present** with the round button that appears once you scroll into history.
 - **Toggle volume, auto-scale, log scale, the light theme and fullscreen** from the top-right icons.
+- **Fit a span of history** with the 1D / 5D / 1M / All buttons in the bottom-left corner.
+- **Change the cursor** between cross, dot and arrow, from the menu next to the chart-type menu.
+- **Save a PNG of the chart** with the camera button.
 - **Change your time zone** from the dropdown in the bottom-right corner.
 
 ## How the market works

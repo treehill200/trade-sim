@@ -2,6 +2,7 @@ import { useUi } from '@/state/store';
 import { marketClient } from '@/state/marketClient';
 import { formatCents, formatClock } from '@/chart/format';
 import { useMarketPulse, useNow } from './useMarket';
+import { DateRangeButtons } from './DateRangeButtons';
 
 const TIMEZONES = [
   'UTC',
@@ -34,6 +35,8 @@ export function BottomBar(): JSX.Element {
   return (
     <footer className="bottom-bar">
       <div className="bottom-left">
+        <DateRangeButtons />
+        <span className="bottom-divider" />
         <span className="quote-chip">
           <em>Bid</em>
           <b className="down">{q.bid ? formatCents(q.bid) : '—'}</b>

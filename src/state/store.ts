@@ -2,19 +2,27 @@ import { create } from 'zustand';
 import type { Timeframe } from '@/engine/timeframes';
 import { parseTimeframe } from '@/engine/timeframes';
 import type { ThemeName } from '@/chart/theme';
+import { parseChartType, type ChartType } from '@/chart/chartTypes';
 import { loadLocal, saveLocal } from '@/storage/local';
 
 export type CursorMode = 'cross' | 'dot' | 'arrow';
 
+export type DateRange = '1D' | '5D' | '1M' | 'All';
+
 export interface UiState {
   timeframe: Timeframe;
+  chartType: ChartType;
   theme: ThemeName;
   timeZone: string;
   autoScale: boolean;
   logScale: boolean;
   showVolume: boolean;
   cursorMode: CursorMode;
+  /** Date-range shortcut currently in effect, cleared as soon as you zoom. */
+  activeRange: DateRange | null;
   setTimeframe: (tf: Timeframe) => void;
+  setActiveRange: (r: DateRange | null) => void;
+  setChartType: (t: ChartType) => void;
   setTheme: (t: ThemeName) => void;
   setTimeZone: (tz: string) => void;
   toggleAutoScale: () => void;
@@ -27,6 +35,7 @@ const LS_KEY = 'ui';
 
 interface PersistedUi {
   timeframe: string;
+  chartType: string;
   theme: ThemeName;
   timeZone: string;
   autoScale: boolean;
@@ -45,6 +54,7 @@ function localTimeZone(): string {
 
 const defaults: PersistedUi = {
   timeframe: '1m',
+  chartType: 'candles',
   theme: 'dark',
   timeZone: localTimeZone(),
   autoScale: true,
@@ -58,6 +68,7 @@ const saved = { ...defaults, ...loadLocal<Partial<PersistedUi>>(LS_KEY, {}) };
 function persist(state: UiState): void {
   saveLocal(LS_KEY, {
     timeframe: state.timeframe,
+    chartType: state.chartType,
     theme: state.theme,
     timeZone: state.timeZone,
     autoScale: state.autoScale,
@@ -69,14 +80,23 @@ function persist(state: UiState): void {
 
 export const useUi = create<UiState>((set, get) => ({
   timeframe: parseTimeframe(saved.timeframe) ?? '1m',
+  chartType: parseChartType(saved.chartType) ?? 'candles',
   theme: saved.theme,
   timeZone: saved.timeZone,
   autoScale: saved.autoScale,
   logScale: saved.logScale,
   showVolume: saved.showVolume,
   cursorMode: saved.cursorMode,
+  activeRange: null,
+  setActiveRange: (activeRange) => {
+    if (get().activeRange !== activeRange) set({ activeRange });
+  },
   setTimeframe: (tf) => {
     set({ timeframe: tf });
+    persist(get());
+  },
+  setChartType: (chartType) => {
+    set({ chartType });
     persist(get());
   },
   setTheme: (theme) => {

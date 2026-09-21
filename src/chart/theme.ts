@@ -20,12 +20,18 @@ export interface ChartTheme {
   volumeDown: string;
   /** Used for the volume silhouette when bars are thinner than a pixel. */
   volumeNeutral: string;
+  volumeNeutralFaded: string;
   crosshair: string;
   crosshairLabelBg: string;
   crosshairLabelText: string;
   lastPriceLine: string;
   lastPriceGlow: string;
   accent: string;
+  /** Line/area chart stroke. */
+  lineColor: string;
+  /** Top and bottom stops of the area chart's gradient fill. */
+  areaTop: string;
+  areaBottom: string;
 }
 
 export const DARK_THEME: ChartTheme = {
@@ -46,13 +52,17 @@ export const DARK_THEME: ChartTheme = {
   downWick: '#e2445c',
   volumeUp: 'rgba(38, 169, 108, 0.42)',
   volumeDown: 'rgba(226, 68, 92, 0.42)',
-  volumeNeutral: 'rgba(120, 140, 175, 0.38)',
+  volumeNeutral: 'rgba(120, 140, 175, 0.42)',
+  volumeNeutralFaded: 'rgba(120, 140, 175, 0.16)',
   crosshair: 'rgba(155, 163, 180, 0.65)',
   crosshairLabelBg: '#2a2e39',
   crosshairLabelText: '#e6e9ef',
   lastPriceLine: '#b0b6c3',
-  lastPriceGlow: 'rgba(120, 190, 255, 0.35)',
+  lastPriceGlow: 'rgba(150, 175, 215, 0.14)',
   accent: '#3b82f6',
+  lineColor: '#4d9cf6',
+  areaTop: 'rgba(77, 156, 246, 0.28)',
+  areaBottom: 'rgba(77, 156, 246, 0.01)',
 };
 
 export const LIGHT_THEME: ChartTheme = {
@@ -73,13 +83,17 @@ export const LIGHT_THEME: ChartTheme = {
   downWick: '#d1384f',
   volumeUp: 'rgba(15, 153, 96, 0.35)',
   volumeDown: 'rgba(209, 56, 79, 0.35)',
-  volumeNeutral: 'rgba(90, 105, 130, 0.32)',
+  volumeNeutral: 'rgba(90, 105, 130, 0.34)',
+  volumeNeutralFaded: 'rgba(90, 105, 130, 0.12)',
   crosshair: 'rgba(60, 70, 90, 0.55)',
   crosshairLabelBg: '#3c4250',
   crosshairLabelText: '#ffffff',
   lastPriceLine: '#4b5563',
-  lastPriceGlow: 'rgba(59, 130, 246, 0.25)',
+  lastPriceGlow: 'rgba(70, 110, 180, 0.12)',
   accent: '#2563eb',
+  lineColor: '#2563eb',
+  areaTop: 'rgba(37, 99, 235, 0.22)',
+  areaBottom: 'rgba(37, 99, 235, 0.01)',
 };
 
 export function themeByName(name: ThemeName): ChartTheme {

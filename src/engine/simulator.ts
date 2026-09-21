@@ -75,8 +75,14 @@ export interface SecondResult {
 
 // --- Tuned constants -------------------------------------------------------
 
-/** Per-second log-return standard deviation at "typical" volatility. */
-const BASE_SIGMA = 1.15e-4; // ~= 65% annualised
+/**
+ * Per-second log-return standard deviation at "typical" volatility.
+ *
+ * This is the diffusion alone; the cascades and the volatility processes
+ * layered on top lift realised volatility to roughly 80-100% annualised,
+ * which is where a liquid crypto pair actually lives.
+ */
+const BASE_SIGMA = 0.92e-4;
 
 /** Slow OU volatility: mean-reversion rate and shock size per second. */
 const SLOW_VOL_KAPPA = 1 / (6 * 3600); // half-life ~4.2 hours
@@ -226,10 +232,10 @@ export class MarketSimulator {
     const flash = this.rng.next() < 0.3;
     if (flash) {
       s.cascadeLen = this.rng.int(8, 45);
-      s.cascadeMag = this.rng.range(2.5, 8);
+      s.cascadeMag = this.rng.range(2.2, 7);
     } else {
       s.cascadeLen = this.rng.int(70, 420);
-      s.cascadeMag = this.rng.range(1.1, 3.6);
+      s.cascadeMag = this.rng.range(1.0, 3.1);
     }
     s.cascadeLeft = s.cascadeLen;
     s.cascadeDir = this.rng.next() < CASCADE_DOWN_BIAS ? -1 : 1;

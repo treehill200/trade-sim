@@ -1,4 +1,18 @@
-import { CandlestickChart, Maximize2, Moon, Sun, BarChart3, Scaling, Ruler } from 'lucide-react';
+import {
+  BarChart3,
+  Camera,
+  CandlestickChart,
+  Maximize2,
+  Minimize2,
+  Moon,
+  Ruler,
+  Scaling,
+  Sun,
+} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChartTypeMenu } from './ChartTypeMenu';
+import { CursorMenu } from './CursorMenu';
+import { chartController } from '@/chart/chartController';
 import { TIMEFRAMES, type Timeframe } from '@/engine/timeframes';
 import { useUi } from '@/state/store';
 import { marketClient } from '@/state/marketClient';
@@ -10,6 +24,14 @@ const QUICK: Timeframe[] = ['1m', '5m', '15m', '1h', '4h', '1D'];
 
 export function TopToolbar(): JSX.Element {
   useMarketPulse(4);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement !== null);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
   const {
     timeframe,
     setTimeframe,
@@ -38,7 +60,7 @@ export function TopToolbar(): JSX.Element {
       <div className="toolbar-left">
         <div className="brand">
           <CandlestickChart size={18} strokeWidth={2.2} />
-          <span>Parcade</span>
+          <span>Trading Sim</span>
         </div>
         <div className="symbol-badge">
           <span className="symbol-ticker">DAVID/USD</span>
@@ -72,6 +94,9 @@ export function TopToolbar(): JSX.Element {
             </option>
           ))}
         </select>
+        <span className="toolbar-divider" />
+        <ChartTypeMenu />
+        <CursorMenu />
       </div>
 
       <div className="toolbar-right">
@@ -96,6 +121,14 @@ export function TopToolbar(): JSX.Element {
         >
           <Ruler size={16} />
         </button>
+        <span className="toolbar-divider" />
+        <button
+          className="icon-button"
+          onClick={() => chartController.current?.screenshot()}
+          title="Save a PNG of the chart"
+        >
+          <Camera size={16} />
+        </button>
         <button
           className="icon-button"
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -106,13 +139,12 @@ export function TopToolbar(): JSX.Element {
         <button
           className="icon-button"
           onClick={() => {
-            const el = document.documentElement;
             if (document.fullscreenElement) void document.exitFullscreen();
-            else void el.requestFullscreen().catch(() => undefined);
+            else void document.documentElement.requestFullscreen().catch(() => undefined);
           }}
-          title="Fullscreen"
+          title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
         >
-          <Maximize2 size={16} />
+          {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
       </div>
     </header>

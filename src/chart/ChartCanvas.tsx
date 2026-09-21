@@ -4,7 +4,12 @@ import { useUi } from '@/state/store';
 import { themeByName } from './theme';
 import { Viewport, clamp, MAX_BAR_SPACING, MIN_BAR_SPACING } from './viewport';
 import { PRICE_AXIS_WIDTH, TIME_AXIS_HEIGHT, render, type CrosshairState } from './renderer';
+import { HeikinAshiCache } from './plotSeries';
+import { chartController } from './chartController';
+import { TF_SECONDS } from '@/engine/timeframes';
+import type { DateRange } from '@/state/store';
 import { ChartLegend } from '@/ui/ChartLegend';
+import { QuickTrade } from '@/ui/QuickTrade';
 import { ScrollToRealtime } from '@/ui/ScrollToRealtime';
 
 /**
@@ -15,6 +20,33 @@ import { ScrollToRealtime } from '@/ui/ScrollToRealtime';
  */
 const DEFAULT_RIGHT_MARGIN_PX = 90;
 const DEFAULT_VISIBLE_BARS = 160;
+
+/** How much of a price move is closed each frame by the easing. */
+const PRICE_EASING = 0.22;
+/** Beyond this relative jump, snap instead of easing — it is a new series. */
+const EASING_SNAP_THRESHOLD = 0.02;
+
+/**
+ * Move `current` a fraction of the way toward `target`.
+ *
+ * A large jump means the underlying series changed (a new timeframe, a new
+ * chart type, a fresh reload) rather than the market moving, so it snaps
+ * instead of sliding across the screen.
+ */
+function ease(current: number, target: number): number {
+  if (!Number.isFinite(target)) return current;
+  if (!Number.isFinite(current)) return target;
+  if (Math.abs(target - current) > Math.abs(target) * EASING_SNAP_THRESHOLD) return target;
+  return current + (target - current) * PRICE_EASING;
+}
+
+const DAY_MS = 86_400_000;
+const RANGE_MS: Record<DateRange, number> = {
+  '1D': DAY_MS,
+  '5D': 5 * DAY_MS,
+  '1M': 30 * DAY_MS,
+  All: Number.POSITIVE_INFINITY,
+};
 
 type DragMode = 'none' | 'pan' | 'priceScale' | 'timeScale';
 
@@ -34,6 +66,11 @@ export function ChartCanvas(): JSX.Element {
   });
   const pinchRef = useRef<{ distance: number; centerX: number } | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const heikinRef = useRef(new HeikinAshiCache());
+  /** Eased last price, so the price line and tag glide between ticks. */
+  const smoothPriceRef = useRef(Number.NaN);
+  /** Eased close of the newest candle, in the plotted series' own units. */
+  const smoothCloseRef = useRef(Number.NaN);
 
   const [atRealtime, setAtRealtime] = useState(true);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -45,6 +82,7 @@ export function ChartCanvas(): JSX.Element {
   const logScale = useUi((s) => s.logScale);
   const showVolume = useUi((s) => s.showVolume);
   const cursorMode = useUi((s) => s.cursorMode);
+  const chartType = useUi((s) => s.chartType);
 
   // Keep the viewport's scale flags in sync with the UI toggles.
   useEffect(() => {
@@ -62,6 +100,7 @@ export function ChartCanvas(): JSX.Element {
     vp.rightIndex = Math.max(0, len - 1) + rightMarginRef.current / vp.barSpacing;
     followRef.current = true;
     setAtRealtime(true);
+    useUi.getState().setActiveRange(null);
   }, []);
 
   // --- render loop -------------------------------------------------------
@@ -103,26 +142,42 @@ export function ChartCanvas(): JSX.Element {
       }
       vp.clampScroll(series.length);
 
+      const plot = chartType === 'heikin' ? heikinRef.current.sync(series) : series;
+
+      // Ease the displayed price toward the real one. The candles always show
+      // the truth; only the price line and its tag are smoothed, so the chart
+      // never lies about a value while still feeling fluid.
+      const target = marketClient.quote.last || series.lastClose();
+      smoothPriceRef.current = ease(smoothPriceRef.current, target);
+
+      const plotClose = plot.length > 0 ? (plot.close[plot.length - 1] as number) : Number.NaN;
+      smoothCloseRef.current = ease(smoothCloseRef.current, plotClose);
+
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       render(ctx, {
         series,
+        plot,
+        chartType,
         viewport: vp,
         theme: themeByName(theme),
         timeframe,
         timeZone,
         crosshair: crosshairRef.current,
-        volumeHeightRatio: 0.18,
+        showCrosshairLines: cursorMode !== 'dot',
+        volumeHeightRatio: 0.16,
         showVolume,
-        lastPriceCents: marketClient.quote.last || series.lastClose(),
+        lastPriceCents: target,
+        smoothPriceCents: smoothPriceRef.current,
+        liveClose: Number.isFinite(smoothCloseRef.current) ? smoothCloseRef.current : null,
         now: Date.now(),
         dpr,
       });
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [theme, timeframe, timeZone, showVolume, resetView]);
+  }, [theme, timeframe, timeZone, showVolume, chartType, cursorMode, resetView]);
 
   // --- pointer interaction ----------------------------------------------
   const zoneOf = useCallback((x: number, y: number): DragMode => {
@@ -158,6 +213,8 @@ export function ChartCanvas(): JSX.Element {
     const vp = vpRef.current;
     if (followRef.current) vp.setBarSpacing(vp.barSpacing * factor);
     else vp.zoomAt(x, factor);
+    // Any manual zoom means the view no longer matches a range shortcut.
+    useUi.getState().setActiveRange(null);
     syncFollow();
   }, [syncFollow]);
 
@@ -296,6 +353,48 @@ export function ChartCanvas(): JSX.Element {
     setAtRealtime(true);
   }, []);
 
+  /**
+   * Fit a span of time on screen.
+   *
+   * A range longer than the loaded history simply shows everything, which is
+   * what "All" does and what 1M does on a seconds timeframe.
+   */
+  const setDateRange = useCallback(
+    (range: DateRange) => {
+      const vp = vpRef.current;
+      const len = marketClient.series.length;
+      if (len === 0 || vp.width === 0) return;
+      const tfMs = TF_SECONDS[useUi.getState().timeframe] * 1000;
+      const wanted = RANGE_MS[range] / tfMs;
+      const bars = Math.max(10, Math.min(len, wanted));
+      vp.setBarSpacing(vp.width / bars);
+      goRealtime();
+      useUi.getState().setActiveRange(range);
+    },
+    [goRealtime],
+  );
+
+  const screenshot = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    try {
+      const link = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      link.download = `DAVIDUSD-${useUi.getState().timeframe}-${stamp}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch {
+      /* canvas export can be blocked; nothing useful to do but skip it */
+    }
+  }, []);
+
+  useEffect(() => {
+    chartController.current = { setDateRange, resetView, scrollToRealtime: goRealtime, screenshot };
+    return () => {
+      chartController.current = null;
+    };
+  }, [setDateRange, resetView, goRealtime, screenshot]);
+
   const cursorCss = cursorMode === 'arrow' ? 'default' : cursorMode === 'dot' ? 'cell' : 'crosshair';
 
   return (
@@ -312,6 +411,7 @@ export function ChartCanvas(): JSX.Element {
         onDoubleClick={onDoubleClick}
       />
       <ChartLegend hoverIndex={hoverIndex} />
+      <QuickTrade />
       {!atRealtime && <ScrollToRealtime onClick={goRealtime} />}
     </div>
   );

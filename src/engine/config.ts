@@ -22,7 +22,7 @@ export interface MarketConfig {
  * version is discarded and regenerated rather than stitched onto a walk that
  * no longer matches it.
  */
-export const ENGINE_VERSION = 1;
+export const ENGINE_VERSION = 2;
 
 export const DEFAULT_SYMBOL = 'DAVID/USD';
 export const DEFAULT_NAME = 'David Coin';

@@ -11,7 +11,7 @@ export interface PriceRange {
   max: number; // cents
 }
 
-export const MIN_BAR_SPACING = 0.05;
+export const MIN_BAR_SPACING = 0.015;
 export const MAX_BAR_SPACING = 160;
 
 export class Viewport {
