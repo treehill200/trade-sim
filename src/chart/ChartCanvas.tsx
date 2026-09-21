@@ -1,14 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { marketClient } from '@/state/marketClient';
-import { useUi } from '@/state/store';
+import { useUi, type DateRange } from '@/state/store';
 import { themeByName } from './theme';
-import { Viewport, clamp, MAX_BAR_SPACING, MIN_BAR_SPACING } from './viewport';
+import { PriceScale, TimeScale, clamp, MAX_BAR_SPACING, MIN_BAR_SPACING } from './scales';
 import { PRICE_AXIS_WIDTH, TIME_AXIS_HEIGHT, render, type CrosshairState } from './renderer';
 import { HeikinAshiCache } from './plotSeries';
 import { chartController } from './chartController';
+import {
+  PANE_SEPARATOR,
+  layoutPanes,
+  resizePane,
+  syncPriceScales,
+  type Pane,
+  type PaneItem,
+} from './panes';
+import { indicatorDef } from '@/indicators/defs';
+import { indicatorEngine } from '@/indicators/engine';
 import { TF_SECONDS } from '@/engine/timeframes';
-import type { DateRange } from '@/state/store';
 import { ChartLegend } from '@/ui/ChartLegend';
+import { PaneLegends, type PaneLegendRow } from '@/ui/PaneLegends';
 import { QuickTrade } from '@/ui/QuickTrade';
 import { ScrollToRealtime } from '@/ui/ScrollToRealtime';
 
@@ -26,6 +36,14 @@ const PRICE_EASING = 0.22;
 /** Beyond this relative jump, snap instead of easing — it is a new series. */
 const EASING_SNAP_THRESHOLD = 0.02;
 
+const DAY_MS = 86_400_000;
+const RANGE_MS: Record<DateRange, number> = {
+  '1D': DAY_MS,
+  '5D': 5 * DAY_MS,
+  '1M': 30 * DAY_MS,
+  All: Number.POSITIVE_INFINITY,
+};
+
 /**
  * Move `current` a fraction of the way toward `target`.
  *
@@ -40,29 +58,29 @@ function ease(current: number, target: number): number {
   return current + (target - current) * PRICE_EASING;
 }
 
-const DAY_MS = 86_400_000;
-const RANGE_MS: Record<DateRange, number> = {
-  '1D': DAY_MS,
-  '5D': 5 * DAY_MS,
-  '1M': 30 * DAY_MS,
-  All: Number.POSITIVE_INFINITY,
-};
+type DragMode = 'none' | 'pan' | 'valueScale' | 'timeScale' | 'paneResize';
 
-type DragMode = 'none' | 'pan' | 'priceScale' | 'timeScale';
+interface PaneRect {
+  id: string;
+  top: number;
+  height: number;
+}
 
 export function ChartCanvas(): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const vpRef = useRef(new Viewport());
+  const timeScaleRef = useRef(new TimeScale());
+  const priceScalesRef = useRef(new Map<string, PriceScale>());
   const crosshairRef = useRef<CrosshairState>({ x: 0, y: 0, visible: false });
   const followRef = useRef(true);
   const rightMarginRef = useRef(DEFAULT_RIGHT_MARGIN_PX);
   const revisionRef = useRef(-1);
-  const dragRef = useRef<{ mode: DragMode; x: number; y: number; moved: boolean }>({
+  const dragRef = useRef<{ mode: DragMode; x: number; y: number; paneId: string; index: number }>({
     mode: 'none',
     x: 0,
     y: 0,
-    moved: false,
+    paneId: 'main',
+    index: 0,
   });
   const pinchRef = useRef<{ distance: number; centerX: number } | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
@@ -71,9 +89,14 @@ export function ChartCanvas(): JSX.Element {
   const smoothPriceRef = useRef(Number.NaN);
   /** Eased close of the newest candle, in the plotted series' own units. */
   const smoothCloseRef = useRef(Number.NaN);
+  /** Pane rectangles from the last frame, for hit testing between frames. */
+  const rectsRef = useRef<PaneRect[]>([]);
+  const plotBottomRef = useRef(0);
 
   const [atRealtime, setAtRealtime] = useState(true);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const [paneRects, setPaneRects] = useState<PaneRect[]>([]);
+  const [cursorOverride, setCursorOverride] = useState<string | null>(null);
 
   const theme = useUi((s) => s.theme);
   const timeframe = useUi((s) => s.timeframe);
@@ -83,21 +106,39 @@ export function ChartCanvas(): JSX.Element {
   const showVolume = useUi((s) => s.showVolume);
   const cursorMode = useUi((s) => s.cursorMode);
   const chartType = useUi((s) => s.chartType);
+  const indicators = useUi((s) => s.indicators);
 
-  // Keep the viewport's scale flags in sync with the UI toggles.
+  /** Indicators that get their own pane, in order; the rest overlay the price. */
+  const paneIndicators = useMemo(
+    () => indicators.filter((i) => indicatorDef(i.defId)?.overlay === false),
+    [indicators],
+  );
+  const overlayIndicators = useMemo(
+    () => indicators.filter((i) => indicatorDef(i.defId)?.overlay !== false),
+    [indicators],
+  );
+  const paneIds = useMemo(
+    () => ['main', ...paneIndicators.map((i) => i.id)],
+    [paneIndicators],
+  );
+
+  // The main pane's scale flags follow the toolbar toggles; indicator panes
+  // always auto-scale, since a manual range on an RSI is rarely useful.
   useEffect(() => {
-    vpRef.current.autoScale = autoScale;
+    const ps = priceScalesRef.current.get('main');
+    if (ps) ps.autoScale = autoScale;
   }, [autoScale]);
   useEffect(() => {
-    vpRef.current.logScale = logScale;
+    const ps = priceScalesRef.current.get('main');
+    if (ps) ps.logScale = logScale;
   }, [logScale]);
 
   const resetView = useCallback(() => {
-    const vp = vpRef.current;
+    const ts = timeScaleRef.current;
     const len = marketClient.series.length;
-    vp.barSpacing = clamp(vp.width / DEFAULT_VISIBLE_BARS, MIN_BAR_SPACING, MAX_BAR_SPACING);
+    ts.barSpacing = clamp(ts.width / DEFAULT_VISIBLE_BARS, MIN_BAR_SPACING, MAX_BAR_SPACING);
     rightMarginRef.current = DEFAULT_RIGHT_MARGIN_PX;
-    vp.rightIndex = Math.max(0, len - 1) + rightMarginRef.current / vp.barSpacing;
+    ts.rightIndex = Math.max(0, len - 1) + rightMarginRef.current / ts.barSpacing;
     followRef.current = true;
     setAtRealtime(true);
     useUi.getState().setActiveRange(null);
@@ -126,10 +167,11 @@ export function ChartCanvas(): JSX.Element {
         canvas.style.height = `${cssHeight}px`;
       }
 
-      const vp = vpRef.current;
-      const firstLayout = vp.width === 0;
-      vp.width = cssWidth - PRICE_AXIS_WIDTH;
-      vp.height = cssHeight - TIME_AXIS_HEIGHT;
+      const ts = timeScaleRef.current;
+      const firstLayout = ts.width === 0;
+      ts.width = cssWidth - PRICE_AXIS_WIDTH;
+      const plotHeight = cssHeight - TIME_AXIS_HEIGHT;
+      plotBottomRef.current = plotHeight;
 
       const series = marketClient.series;
       if (revisionRef.current !== marketClient.revision || firstLayout) {
@@ -138,18 +180,60 @@ export function ChartCanvas(): JSX.Element {
       }
 
       if (followRef.current && series.length > 0) {
-        vp.rightIndex = series.length - 1 + rightMarginRef.current / vp.barSpacing;
+        ts.rightIndex = series.length - 1 + rightMarginRef.current / ts.barSpacing;
       }
-      vp.clampScroll(series.length);
+      ts.clampScroll(series.length);
+
+      // --- panes ---------------------------------------------------------
+      const ui = useUi.getState();
+      const scales = syncPriceScales(paneIds, priceScalesRef.current);
+      const rects = layoutPanes(paneIds, ui.paneRatios, plotHeight);
+      rectsRef.current = rects;
+      for (const r of rects) {
+        const ps = scales.get(r.id);
+        if (!ps) continue;
+        ps.top = r.top;
+        ps.height = r.height;
+      }
+      if (rectsChanged(paneRects, rects)) setPaneRects(rects);
+
+      const panes: Pane[] = [];
+      const mainScale = scales.get('main') as PriceScale;
+      panes.push({
+        id: 'main',
+        kind: 'main',
+        priceScale: mainScale,
+        items: buildItems(overlayIndicators, series),
+        format: 'price',
+        guides: [],
+      });
+      for (const inst of paneIndicators) {
+        const def = indicatorDef(inst.defId);
+        const ps = scales.get(inst.id);
+        if (!def || !ps) continue;
+        ps.autoScale = true;
+        ps.fixedRange = def.fixedRange ?? null;
+        ps.paddingTop = def.fixedRange ? 0.02 : 0.1;
+        ps.paddingBottom = def.fixedRange ? 0.02 : 0.1;
+        panes.push({
+          id: inst.id,
+          kind: 'indicator',
+          priceScale: ps,
+          items: buildItems([inst], series),
+          format: def.format,
+          guides: def.guides ?? [],
+        });
+      }
+      indicatorEngine.prune(indicators.map((i) => i.id));
 
       const plot = chartType === 'heikin' ? heikinRef.current.sync(series) : series;
 
       // Ease the displayed price toward the real one. The candles always show
-      // the truth; only the price line and its tag are smoothed, so the chart
-      // never lies about a value while still feeling fluid.
+      // the truth; only the price line, its tag and the live candle's closing
+      // edge are smoothed, so the chart never lies about a value while still
+      // feeling fluid.
       const target = marketClient.quote.last || series.lastClose();
       smoothPriceRef.current = ease(smoothPriceRef.current, target);
-
       const plotClose = plot.length > 0 ? (plot.close[plot.length - 1] as number) : Number.NaN;
       smoothCloseRef.current = ease(smoothCloseRef.current, plotClose);
 
@@ -160,7 +244,8 @@ export function ChartCanvas(): JSX.Element {
         series,
         plot,
         chartType,
-        viewport: vp,
+        timeScale: ts,
+        panes,
         theme: themeByName(theme),
         timeframe,
         timeZone,
@@ -177,27 +262,34 @@ export function ChartCanvas(): JSX.Element {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [theme, timeframe, timeZone, showVolume, chartType, cursorMode, resetView]);
+  }, [
+    theme,
+    timeframe,
+    timeZone,
+    showVolume,
+    chartType,
+    cursorMode,
+    resetView,
+    paneIds,
+    paneIndicators,
+    overlayIndicators,
+    indicators,
+    paneRects,
+  ]);
 
-  // --- pointer interaction ----------------------------------------------
-  const zoneOf = useCallback((x: number, y: number): DragMode => {
-    const vp = vpRef.current;
-    if (x > vp.width) return 'priceScale';
-    if (y > vp.height) return 'timeScale';
-    return 'pan';
-  }, []);
+  // --- interaction -------------------------------------------------------
 
   const syncFollow = useCallback(() => {
-    const vp = vpRef.current;
+    const ts = timeScaleRef.current;
     const len = marketClient.series.length;
     if (len === 0) return;
-    vp.clampScroll(len);
-    const marginPx = (vp.rightIndex - (len - 1)) * vp.barSpacing;
+    ts.clampScroll(len);
+    const marginPx = (ts.rightIndex - (len - 1)) * ts.barSpacing;
     // Half a candle of slack: the newest bar can sit right on the edge.
-    const following = marginPx >= -vp.barSpacing * 0.5;
+    const following = marginPx >= -ts.barSpacing * 0.5;
     followRef.current = following;
     if (following) {
-      rightMarginRef.current = clamp(marginPx, 0, vp.maxRightMarginPx());
+      rightMarginRef.current = clamp(marginPx, 0, ts.maxRightMarginPx());
     }
     setAtRealtime((prev) => (prev === following ? prev : following));
   }, []);
@@ -209,14 +301,34 @@ export function ChartCanvas(): JSX.Element {
    * candle at the same pixel and only changes the bar width — anchoring on the
    * cursor there would slide the live candle off into blank space.
    */
-  const zoom = useCallback((x: number, factor: number) => {
-    const vp = vpRef.current;
-    if (followRef.current) vp.setBarSpacing(vp.barSpacing * factor);
-    else vp.zoomAt(x, factor);
-    // Any manual zoom means the view no longer matches a range shortcut.
-    useUi.getState().setActiveRange(null);
-    syncFollow();
-  }, [syncFollow]);
+  const zoom = useCallback(
+    (x: number, factor: number) => {
+      const ts = timeScaleRef.current;
+      if (followRef.current) ts.setBarSpacing(ts.barSpacing * factor);
+      else ts.zoomAt(x, factor);
+      useUi.getState().setActiveRange(null);
+      syncFollow();
+    },
+    [syncFollow],
+  );
+
+  /** Which part of the chart is under a point, and which pane it belongs to. */
+  const hitTest = useCallback((x: number, y: number): { mode: DragMode; paneId: string; index: number } => {
+    const ts = timeScaleRef.current;
+    const rects = rectsRef.current;
+    // Separators first: they overlap the edges of the panes on either side.
+    for (let i = 0; i < rects.length - 1; i++) {
+      const r = rects[i] as PaneRect;
+      const gapTop = r.top + r.height;
+      if (y >= gapTop - 2 && y <= gapTop + PANE_SEPARATOR + 2) {
+        return { mode: 'paneResize', paneId: r.id, index: i };
+      }
+    }
+    const pane = rects.find((r) => y >= r.top && y <= r.top + r.height);
+    if (x > ts.width) return { mode: 'valueScale', paneId: pane?.id ?? 'main', index: 0 };
+    if (y > plotBottomRef.current) return { mode: 'timeScale', paneId: 'main', index: 0 };
+    return { mode: 'pan', paneId: pane?.id ?? 'main', index: 0 };
+  }, []);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -236,59 +348,80 @@ export function ChartCanvas(): JSX.Element {
         return;
       }
       e.currentTarget.setPointerCapture(e.pointerId);
-      dragRef.current = { mode: zoneOf(x, y), x, y, moved: false };
+      const hit = hitTest(x, y);
+      dragRef.current = { mode: hit.mode, x, y, paneId: hit.paneId, index: hit.index };
     },
-    [zoneOf],
+    [hitTest],
   );
 
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const vp = vpRef.current;
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const ts = timeScaleRef.current;
 
-    if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, { x, y });
+      if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, { x, y });
 
-    if (pointersRef.current.size === 2 && pinchRef.current) {
-      const pts = [...pointersRef.current.values()];
-      const a = pts[0]!;
-      const b = pts[1]!;
-      const dist = Math.hypot(a.x - b.x, a.y - b.y);
-      const factor = dist / (pinchRef.current.distance || dist);
-      zoom(pinchRef.current.centerX, factor);
-      pinchRef.current.distance = dist;
-      return;
-    }
-
-    crosshairRef.current = { x, y, visible: x <= vp.width && y <= vp.height };
-    const idx = Math.round(vp.indexOfX(x));
-    setHoverIndex(x <= vp.width && y <= vp.height && idx >= 0 && idx < marketClient.series.length ? idx : null);
-
-    const drag = dragRef.current;
-    if (drag.mode === 'none') return;
-    const dx = x - drag.x;
-    const dy = y - drag.y;
-    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) drag.moved = true;
-
-    if (drag.mode === 'pan') {
-      vp.rightIndex -= dx / vp.barSpacing;
-      if (!vp.autoScale) vp.panRange(dy);
-      syncFollow();
-    } else if (drag.mode === 'priceScale') {
-      // Dragging down compresses the price axis, like a pro terminal.
-      const factor = Math.exp(dy / 160);
-      if (vp.autoScale) {
-        // Leaving auto-scale on would immediately undo the drag.
-        useUi.getState().toggleAutoScale();
-        vp.autoScale = false;
+      if (pointersRef.current.size === 2 && pinchRef.current) {
+        const pts = [...pointersRef.current.values()];
+        const a = pts[0]!;
+        const b = pts[1]!;
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        zoom(pinchRef.current.centerX, dist / (pinchRef.current.distance || dist));
+        pinchRef.current.distance = dist;
+        return;
       }
-      vp.scaleRange(factor);
-    } else if (drag.mode === 'timeScale') {
-      zoom(vp.width, Math.exp(-dx / 160));
-    }
-    drag.x = x;
-    drag.y = y;
-  }, [zoom, syncFollow]);
+
+      crosshairRef.current = { x, y, visible: x <= ts.width && y <= plotBottomRef.current };
+      const idx = Math.round(ts.indexOfX(x));
+      setHoverIndex(
+        x <= ts.width && y <= plotBottomRef.current && idx >= 0 && idx < marketClient.series.length
+          ? idx
+          : null,
+      );
+
+      const drag = dragRef.current;
+      if (drag.mode === 'none') {
+        const hit = hitTest(x, y);
+        const next =
+          hit.mode === 'paneResize' ? 'row-resize' : hit.mode === 'valueScale' ? 'ns-resize' : null;
+        setCursorOverride((prev) => (prev === next ? prev : next));
+        return;
+      }
+
+      const dx = x - drag.x;
+      const dy = y - drag.y;
+
+      if (drag.mode === 'pan') {
+        ts.rightIndex -= dx / ts.barSpacing;
+        const ps = priceScalesRef.current.get(drag.paneId);
+        if (ps && !ps.autoScale) ps.panRange(dy);
+        syncFollow();
+      } else if (drag.mode === 'valueScale') {
+        const ps = priceScalesRef.current.get(drag.paneId);
+        if (ps) {
+          // Dragging down compresses the axis, like a pro terminal.
+          if (drag.paneId === 'main' && ps.autoScale) {
+            // Leaving auto-scale on would immediately undo the drag.
+            useUi.getState().toggleAutoScale();
+            ps.autoScale = false;
+          }
+          if (!ps.autoScale) ps.scaleRange(Math.exp(dy / 160));
+        }
+      } else if (drag.mode === 'timeScale') {
+        zoom(ts.width, Math.exp(-dx / 160));
+      } else if (drag.mode === 'paneResize') {
+        const ui = useUi.getState();
+        ui.setPaneRatios(
+          resizePane(paneIds, ui.paneRatios, drag.index, dy, plotBottomRef.current),
+        );
+      }
+      drag.x = x;
+      drag.y = y;
+    },
+    [zoom, syncFollow, hitTest, paneIds],
+  );
 
   const endDrag = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     pointersRef.current.delete(e.pointerId);
@@ -304,6 +437,7 @@ export function ChartCanvas(): JSX.Element {
   const onPointerLeave = useCallback(() => {
     crosshairRef.current = { ...crosshairRef.current, visible: false };
     setHoverIndex(null);
+    setCursorOverride(null);
   }, []);
 
   const onDoubleClick = useCallback(
@@ -311,18 +445,17 @@ export function ChartCanvas(): JSX.Element {
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      const vp = vpRef.current;
-      if (x > vp.width) {
+      const hit = hitTest(x, y);
+      if (hit.mode === 'valueScale' && hit.paneId === 'main') {
         // Double-click the price axis: back to auto-scale.
         if (!useUi.getState().autoScale) useUi.getState().toggleAutoScale();
-        vp.autoScale = true;
-      } else if (y > vp.height) {
-        resetView();
-      } else {
-        resetView();
+        const ps = priceScalesRef.current.get('main');
+        if (ps) ps.autoScale = true;
+        return;
       }
+      resetView();
     },
-    [resetView],
+    [hitTest, resetView],
   );
 
   // Wheel handling is registered manually so it can be non-passive and
@@ -334,12 +467,12 @@ export function ChartCanvas(): JSX.Element {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
-      const vp = vpRef.current;
+      const ts = timeScaleRef.current;
       if (e.ctrlKey || Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
         // Trackpad pinch arrives as ctrl+wheel; plain wheel zooms too.
-        zoom(Math.min(x, vp.width), Math.exp(-e.deltaY * 0.0022));
+        zoom(Math.min(x, ts.width), Math.exp(-e.deltaY * 0.0022));
       } else {
-        vp.rightIndex += e.deltaX / vp.barSpacing;
+        ts.rightIndex += e.deltaX / ts.barSpacing;
         syncFollow();
       }
     };
@@ -361,13 +494,12 @@ export function ChartCanvas(): JSX.Element {
    */
   const setDateRange = useCallback(
     (range: DateRange) => {
-      const vp = vpRef.current;
+      const ts = timeScaleRef.current;
       const len = marketClient.series.length;
-      if (len === 0 || vp.width === 0) return;
+      if (len === 0 || ts.width === 0) return;
       const tfMs = TF_SECONDS[useUi.getState().timeframe] * 1000;
-      const wanted = RANGE_MS[range] / tfMs;
-      const bars = Math.max(10, Math.min(len, wanted));
-      vp.setBarSpacing(vp.width / bars);
+      const bars = Math.max(10, Math.min(len, RANGE_MS[range] / tfMs));
+      ts.setBarSpacing(ts.width / bars);
       goRealtime();
       useUi.getState().setActiveRange(range);
     },
@@ -395,7 +527,17 @@ export function ChartCanvas(): JSX.Element {
     };
   }, [setDateRange, resetView, goRealtime, screenshot]);
 
-  const cursorCss = cursorMode === 'arrow' ? 'default' : cursorMode === 'dot' ? 'cell' : 'crosshair';
+  const legendRows: PaneLegendRow[] = useMemo(
+    () =>
+      paneRects
+        .slice(1)
+        .map((rect, i) => ({ rect, instance: paneIndicators[i] }))
+        .filter((r): r is PaneLegendRow => r.instance !== undefined),
+    [paneRects, paneIndicators],
+  );
+
+  const cursorCss =
+    cursorOverride ?? (cursorMode === 'arrow' ? 'default' : cursorMode === 'dot' ? 'cell' : 'crosshair');
 
   return (
     <div className="chart-container" ref={containerRef}>
@@ -410,9 +552,40 @@ export function ChartCanvas(): JSX.Element {
         onPointerLeave={onPointerLeave}
         onDoubleClick={onDoubleClick}
       />
-      <ChartLegend hoverIndex={hoverIndex} />
-      <QuickTrade />
+      <div className="chart-overlay-left">
+        <ChartLegend hoverIndex={hoverIndex} overlays={overlayIndicators} />
+        <QuickTrade />
+      </div>
+      <PaneLegends rows={legendRows} hoverIndex={hoverIndex} />
       {!atRealtime && <ScrollToRealtime onClick={goRealtime} />}
     </div>
   );
+}
+
+/** Compute every indicator in a pane, dropping any that fail to resolve. */
+function buildItems(
+  instances: { id: string; defId: string }[],
+  series: Parameters<typeof indicatorEngine.compute>[1],
+): PaneItem[] {
+  const out: PaneItem[] = [];
+  for (const inst of instances) {
+    const def = indicatorDef(inst.defId);
+    if (!def) continue;
+    const full = useUi.getState().indicators.find((i) => i.id === inst.id);
+    if (!full) continue;
+    const result = indicatorEngine.compute(full, series);
+    if (!result) continue;
+    out.push({ instance: full, def, result });
+  }
+  return out;
+}
+
+function rectsChanged(a: PaneRect[], b: PaneRect[]): boolean {
+  if (a.length !== b.length) return true;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] as PaneRect;
+    const y = b[i] as PaneRect;
+    if (x.id !== y.id || x.top !== y.top || x.height !== y.height) return true;
+  }
+  return false;
 }

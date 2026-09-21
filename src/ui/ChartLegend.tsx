@@ -1,4 +1,7 @@
 import { marketClient } from '@/state/marketClient';
+import type { IndicatorInstance } from '@/indicators/types';
+import { IndicatorLegendRow } from './IndicatorLegend';
+import { useIndicatorSettings } from './IndicatorSettingsContext';
 import { useUi } from '@/state/store';
 import { formatCents, formatPercent, formatSignedCents, formatVolume } from '@/chart/format';
 import { useMarketPulse } from './useMarket';
@@ -6,6 +9,8 @@ import { useMarketPulse } from './useMarket';
 interface Props {
   /** Candle under the cursor, or null to describe the newest candle. */
   hoverIndex: number | null;
+  /** Indicators drawn over the price chart, listed under the OHLC readout. */
+  overlays: IndicatorInstance[];
 }
 
 /**
@@ -14,9 +19,10 @@ interface Props {
  * Rendered as HTML rather than into the canvas so the type stays crisp at any
  * device pixel ratio and can use the app's font stack directly.
  */
-export function ChartLegend({ hoverIndex }: Props): JSX.Element | null {
+export function ChartLegend({ hoverIndex, overlays }: Props): JSX.Element | null {
   useMarketPulse(8);
   const timeframe = useUi((s) => s.timeframe);
+  const { open } = useIndicatorSettings();
   const series = marketClient.series;
   if (series.length === 0) return null;
 
@@ -60,6 +66,14 @@ export function ChartLegend({ hoverIndex }: Props): JSX.Element | null {
         <em>Vol</em>
         <b className={cls}>{formatVolume(c.volume)}</b>
       </div>
+      {overlays.map((inst) => (
+        <IndicatorLegendRow
+          key={inst.id}
+          instance={inst}
+          hoverIndex={hoverIndex}
+          onOpenSettings={open}
+        />
+      ))}
     </div>
   );
 }

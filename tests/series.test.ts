@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CandleSeries } from '@/engine/series';
 import { floorToTf, TF_SECONDS, TIMEFRAMES } from '@/engine/timeframes';
 import { niceStep, formatCents, formatCountdown, formatPercent } from '@/chart/format';
-import { Viewport } from '@/chart/viewport';
+import { PriceScale, TimeScale } from '@/chart/scales';
 
 describe('CandleSeries', () => {
   it('grows past its initial capacity', () => {
@@ -80,43 +80,55 @@ describe('formatting', () => {
   });
 });
 
-describe('Viewport', () => {
+describe('TimeScale', () => {
   it('maps bar indices to pixels and back', () => {
-    const vp = new Viewport();
-    vp.width = 800;
-    vp.height = 400;
-    vp.barSpacing = 8;
-    vp.rightIndex = 100;
-    expect(vp.xOfIndex(100)).toBe(800);
-    expect(vp.xOfIndex(0)).toBe(0);
-    expect(vp.indexOfX(400)).toBeCloseTo(50);
+    const ts = new TimeScale();
+    ts.width = 800;
+    ts.barSpacing = 8;
+    ts.rightIndex = 100;
+    expect(ts.xOfIndex(100)).toBe(800);
+    expect(ts.xOfIndex(0)).toBe(0);
+    expect(ts.indexOfX(400)).toBeCloseTo(50);
   });
 
   it('keeps the anchored bar under the cursor while zooming', () => {
-    const vp = new Viewport();
-    vp.width = 800;
-    vp.height = 400;
-    vp.barSpacing = 8;
-    vp.rightIndex = 100;
+    const ts = new TimeScale();
+    ts.width = 800;
+    ts.barSpacing = 8;
+    ts.rightIndex = 100;
     const anchorX = 320;
-    const before = vp.indexOfX(anchorX);
-    vp.zoomAt(anchorX, 1.5);
-    expect(vp.indexOfX(anchorX)).toBeCloseTo(before, 6);
+    const before = ts.indexOfX(anchorX);
+    ts.zoomAt(anchorX, 1.5);
+    expect(ts.indexOfX(anchorX)).toBeCloseTo(before, 6);
+  });
+});
+
+describe('PriceScale', () => {
+  it('maps values to pixels on both linear and log axes', () => {
+    const ps = new PriceScale();
+    ps.top = 0;
+    ps.height = 400;
+    ps.range = { min: 100, max: 200 };
+    expect(ps.yOfPrice(200)).toBeCloseTo(0);
+    expect(ps.yOfPrice(100)).toBeCloseTo(400);
+    expect(ps.priceOfY(200)).toBeCloseTo(150);
+
+    ps.logScale = true;
+    expect(ps.yOfPrice(200)).toBeCloseTo(0);
+    expect(ps.yOfPrice(100)).toBeCloseTo(400);
+    // The midpoint of a log axis is the geometric mean, not the average.
+    expect(ps.priceOfY(200)).toBeCloseTo(Math.sqrt(100 * 200));
   });
 
-  it('maps prices to pixels on both linear and log axes', () => {
-    const vp = new Viewport();
-    vp.width = 800;
-    vp.height = 400;
-    vp.range = { min: 100, max: 200 };
-    expect(vp.yOfPrice(200)).toBeCloseTo(0);
-    expect(vp.yOfPrice(100)).toBeCloseTo(400);
-    expect(vp.priceOfY(200)).toBeCloseTo(150);
-
-    vp.logScale = true;
-    expect(vp.yOfPrice(200)).toBeCloseTo(0);
-    expect(vp.yOfPrice(100)).toBeCloseTo(400);
-    // The midpoint of a log axis is the geometric mean, not the average.
-    expect(vp.priceOfY(200)).toBeCloseTo(Math.sqrt(100 * 200));
+  it('offsets by the pane top edge', () => {
+    const ps = new PriceScale();
+    ps.top = 500;
+    ps.height = 200;
+    ps.range = { min: 0, max: 100 };
+    expect(ps.yOfPrice(100)).toBeCloseTo(500);
+    expect(ps.yOfPrice(0)).toBeCloseTo(700);
+    expect(ps.priceOfY(600)).toBeCloseTo(50);
+    expect(ps.contains(600)).toBe(true);
+    expect(ps.contains(400)).toBe(false);
   });
 });

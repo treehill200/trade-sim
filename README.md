@@ -6,9 +6,9 @@ single-page web app with an interface modelled on a professional charting termin
 Everything is simulated: the prices, the order book, the fills and the account. There is no real
 market data, no real money, and no server. It all runs in your browser.
 
-> **Build status:** Phases 1-2 of 7 are complete — the market engine and the chart. The trading
-> side (orders, positions, PnL) arrives in later phases. See `DECISIONS.md` for the running log of
-> technical choices.
+> **Build status:** Phases 1-3 of 7 are complete — the market engine, the chart and the indicators.
+> The trading side (orders, positions, PnL) arrives in later phases. See `DECISIONS.md` for the
+> running log of technical choices.
 
 ## Running it
 
@@ -52,8 +52,28 @@ later visit opens almost instantly.
 - **Toggle volume, auto-scale, log scale, the light theme and fullscreen** from the top-right icons.
 - **Fit a span of history** with the 1D / 5D / 1M / All buttons in the bottom-left corner.
 - **Change the cursor** between cross, dot and arrow, from the menu next to the chart-type menu.
+- **Add indicators** from the "Indicators" button in the top bar: moving averages, VWAP and
+  Bollinger Bands draw over the candles; volume, RSI, MACD, ATR and Stochastic get their own pane.
+- **Tune any indicator** from its legend line — the eye hides it, the gear opens its settings
+  (lengths, colours, line widths) and the X removes it.
+- **Resize a pane** by dragging the gap between it and its neighbour.
 - **Save a PNG of the chart** with the camera button.
 - **Change your time zone** from the dropdown in the bottom-right corner.
+
+## Indicators
+
+Nine to choose from, searchable from the "Indicators" button:
+
+| On the price chart | In their own pane |
+| --- | --- |
+| Moving Average (Simple) | Volume |
+| Moving Average (Exponential) | Relative Strength Index |
+| VWAP (session, anchored to each UTC day) | MACD |
+| Bollinger Bands | Average True Range |
+| | Stochastic |
+
+Every one of them updates live on each price tick, follows the crosshair, and is saved with your
+layout — including its settings, colours and the height of its pane.
 
 ## How the market works
 
@@ -73,13 +93,14 @@ It is also **deterministic**. The entire history comes from one seed, which mean
 
 ```
 src/
-  engine/     the market simulator, candle storage and timeframe aggregation
-  workers/    the Web Worker the market runs in, and its message protocol
-  chart/      the canvas charting engine: viewport, renderer, formatting, theme
-  state/      Zustand UI store and the main-thread client for the market worker
-  storage/    IndexedDB and localStorage helpers
-  ui/         React components for the toolbar, legend and status bars
-tests/        Vitest suites for the engine, aggregation and chart maths
+  engine/      the market simulator, candle storage and timeframe aggregation
+  workers/     the Web Worker the market runs in, and its message protocol
+  chart/       the canvas charting engine: scales, panes, renderer, chart types
+  indicators/  indicator maths, the catalogue, and the result cache
+  state/       Zustand UI store and the main-thread client for the market worker
+  storage/     IndexedDB and localStorage helpers
+  ui/          React components for the toolbars, legends and dialogs
+tests/         Vitest suites for the engine, aggregation, chart maths and indicators
 ```
 
 ## Starting over

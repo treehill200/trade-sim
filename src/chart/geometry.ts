@@ -1,4 +1,4 @@
-import type { Viewport } from './viewport';
+import type { PriceScale, TimeScale } from './scales';
 import type { PlotSeries } from './plotSeries';
 
 /** Snap a coordinate so a 1-device-pixel line lands exactly on a pixel. */
@@ -7,9 +7,9 @@ export function crisp(v: number, dpr: number): number {
 }
 
 /** Visible index window, clamped to the series. */
-export function visibleRange(series: PlotSeries, vp: Viewport): { from: number; to: number } {
-  const from = Math.max(0, Math.floor(vp.leftIndex) - 1);
-  const to = Math.min(series.length - 1, Math.ceil(vp.rightIndex) + 1);
+export function visibleRange(series: PlotSeries, ts: TimeScale): { from: number; to: number } {
+  const from = Math.max(0, Math.floor(ts.leftIndex) - 1);
+  const to = Math.min(series.length - 1, Math.ceil(ts.rightIndex) + 1);
   return { from, to };
 }
 
@@ -66,15 +66,15 @@ function ensureColumns(n: number): void {
 }
 
 /** Reduce the visible candles to one entry per device-pixel column. */
-export function buildColumns(series: PlotSeries, vp: Viewport, dpr: number): Columns {
-  const { from, to } = visibleRange(series, vp);
-  ensureColumns(Math.ceil(vp.width * dpr) + 4);
+export function buildColumns(series: PlotSeries, ts: TimeScale, dpr: number): Columns {
+  const { from, to } = visibleRange(series, ts);
+  ensureColumns(Math.ceil(ts.width * dpr) + 4);
   let n = 0;
   let colX = Number.NaN;
   for (let i = from; i <= to; i++) {
-    const x = vp.xOfIndex(i);
+    const x = ts.xOfIndex(i);
     if (x < -1) continue;
-    if (x > vp.width + 1) break;
+    if (x > ts.width + 1) break;
     const px = Math.round(x * dpr) / dpr;
     if (px !== colX) {
       colX = px;
@@ -110,7 +110,8 @@ export function buildColumns(series: PlotSeries, vp: Viewport, dpr: number): Col
  */
 export function autoScaleRange(
   series: PlotSeries,
-  vp: Viewport,
+  ts: TimeScale,
+  ps: PriceScale,
   cols: Columns | null,
   closeOnly: boolean,
 ): void {
@@ -124,7 +125,7 @@ export function autoScaleRange(
       if (l < min) min = l;
     }
   } else {
-    const { from, to } = visibleRange(series, vp);
+    const { from, to } = visibleRange(series, ts);
     if (to < from) return;
     for (let i = from; i <= to; i++) {
       const h = closeOnly ? (series.close[i] as number) : (series.high[i] as number);
@@ -133,14 +134,30 @@ export function autoScaleRange(
       if (l < min) min = l;
     }
   }
+  applyRange(ps, min, max, 1);
+}
+
+/**
+ * Set a pane's range from raw extremes, with padding and any fixed bounds.
+ *
+ * Shared by the price pane and the indicator panes so padding behaves the same
+ * everywhere, and so an oscillator with a natural 0-100 range never scales to
+ * something misleading.
+ */
+export function applyRange(ps: PriceScale, min: number, max: number, floor = -Infinity): void {
   if (!Number.isFinite(min) || !Number.isFinite(max)) return;
+  if (ps.fixedRange) {
+    min = Math.min(min, ps.fixedRange.min);
+    max = Math.max(max, ps.fixedRange.max);
+  }
   if (max === min) {
-    min -= 50;
-    max += 50;
+    const pad = Math.max(Math.abs(max) * 0.01, 0.5);
+    min -= pad;
+    max += pad;
   }
   const span = max - min;
-  vp.range = {
-    min: Math.max(1, min - span * vp.paddingBottom),
-    max: max + span * vp.paddingTop,
+  ps.range = {
+    min: Math.max(floor, min - span * ps.paddingBottom),
+    max: max + span * ps.paddingTop,
   };
 }

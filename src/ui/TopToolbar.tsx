@@ -2,6 +2,7 @@ import {
   BarChart3,
   Camera,
   CandlestickChart,
+  LineChart,
   Maximize2,
   Minimize2,
   Moon,
@@ -11,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ChartTypeMenu } from './ChartTypeMenu';
+import { IndicatorsDialog } from './IndicatorsDialog';
 import { CursorMenu } from './CursorMenu';
 import { chartController } from '@/chart/chartController';
 import { TIMEFRAMES, type Timeframe } from '@/engine/timeframes';
@@ -25,6 +27,7 @@ const QUICK: Timeframe[] = ['1m', '5m', '15m', '1h', '4h', '1D'];
 export function TopToolbar(): JSX.Element {
   useMarketPulse(4);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [indicatorsOpen, setIndicatorsOpen] = useState(false);
 
   useEffect(() => {
     const onChange = () => setIsFullscreen(document.fullscreenElement !== null);
@@ -97,6 +100,11 @@ export function TopToolbar(): JSX.Element {
         <span className="toolbar-divider" />
         <ChartTypeMenu />
         <CursorMenu />
+        <span className="toolbar-divider" />
+        <button className="text-toolbar-button" onClick={() => setIndicatorsOpen(true)}>
+          <LineChart size={15} />
+          Indicators
+        </button>
       </div>
 
       <div className="toolbar-right">
@@ -147,6 +155,7 @@ export function TopToolbar(): JSX.Element {
           {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
       </div>
+      {indicatorsOpen && <IndicatorsDialog onClose={() => setIndicatorsOpen(false)} />}
     </header>
   );
 }

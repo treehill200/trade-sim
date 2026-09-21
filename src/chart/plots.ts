@@ -1,4 +1,4 @@
-import type { Viewport } from './viewport';
+import type { PriceScale, TimeScale } from './scales';
 import type { ChartTheme } from './theme';
 import type { PlotSeries } from './plotSeries';
 import type { ChartType } from './chartTypes';
@@ -6,7 +6,8 @@ import { crisp, visibleRange, type Columns, DENSE_SPACING } from './geometry';
 
 export interface PlotInput {
   series: PlotSeries;
-  viewport: Viewport;
+  timeScale: TimeScale;
+  priceScale: PriceScale;
   theme: ChartTheme;
   chartType: ChartType;
   dpr: number;
@@ -64,8 +65,8 @@ export function drawPriceSeries(ctx: CanvasRenderingContext2D, input: PlotInput)
  * plain filled body does.
  */
 function drawCandles(ctx: CanvasRenderingContext2D, input: PlotInput, hollow: boolean): void {
-  const { series, viewport: vp, theme, dpr, columns } = input;
-  const spacing = vp.barSpacing;
+  const { series, timeScale: ts, priceScale: ps, theme, dpr, columns } = input;
+  const spacing = ts.barSpacing;
 
   const upWicks = new Path2D();
   const downWicks = new Path2D();
@@ -85,7 +86,7 @@ function drawCandles(ctx: CanvasRenderingContext2D, input: PlotInput, hollow: bo
   const downSolid = new Path2D();
   const downOutline = new Path2D();
 
-  const { from, to } = visibleRange(series, vp);
+  const { from, to } = visibleRange(series, ts);
   const bodyWidth = Math.max(1, Math.floor(spacing * 0.72));
   const halfBody = bodyWidth / 2;
   const wickWidth = Math.max(1 / dpr, Math.min(2, spacing * 0.12));
@@ -93,8 +94,8 @@ function drawCandles(ctx: CanvasRenderingContext2D, input: PlotInput, hollow: bo
   const strokeWidth = 1;
 
   for (let i = from; i <= to; i++) {
-    const x = vp.xOfIndex(i);
-    if (x < -spacing || x > vp.width + spacing) continue;
+    const x = ts.xOfIndex(i);
+    if (x < -spacing || x > ts.width + spacing) continue;
     const o = series.open[i] as number;
     const c = closeAt(input, i);
     const prevClose = i > 0 ? (series.close[i - 1] as number) : o;
@@ -106,12 +107,12 @@ function drawCandles(ctx: CanvasRenderingContext2D, input: PlotInput, hollow: bo
     const cx = crisp(x, dpr);
     // The eased close can briefly sit outside the recorded range, so the wick
     // stretches to cover it rather than letting the body poke out.
-    const yHigh = vp.yOfPrice(Math.max(series.high[i] as number, c));
-    const yLow = vp.yOfPrice(Math.min(series.low[i] as number, c));
+    const yHigh = ps.yOfPrice(Math.max(series.high[i] as number, c));
+    const yLow = ps.yOfPrice(Math.min(series.low[i] as number, c));
     (up ? upWicks : downWicks).rect(cx - wickWidth / 2, yHigh, wickWidth, Math.max(minH, yLow - yHigh));
 
-    const yOpen = vp.yOfPrice(o);
-    const yClose = vp.yOfPrice(c);
+    const yOpen = ps.yOfPrice(o);
+    const yClose = ps.yOfPrice(c);
     const top = Math.round(Math.min(yOpen, yClose) * dpr) / dpr;
     const height = Math.max(minH, Math.abs(yClose - yOpen));
     const left = crisp(x - halfBody, dpr);
@@ -153,8 +154,8 @@ function drawCandles(ctx: CanvasRenderingContext2D, input: PlotInput, hollow: bo
 
 /** OHLC bars: a high-low stick with an open tick left and a close tick right. */
 function drawBars(ctx: CanvasRenderingContext2D, input: PlotInput): void {
-  const { series, viewport: vp, theme, dpr, columns } = input;
-  const spacing = vp.barSpacing;
+  const { series, timeScale: ts, priceScale: ps, theme, dpr, columns } = input;
+  const spacing = ts.barSpacing;
 
   const up = new Path2D();
   const down = new Path2D();
@@ -168,23 +169,23 @@ function drawBars(ctx: CanvasRenderingContext2D, input: PlotInput): void {
     return;
   }
 
-  const { from, to } = visibleRange(series, vp);
+  const { from, to } = visibleRange(series, ts);
   const lineWidth = Math.max(1, Math.min(2, Math.floor(spacing * 0.16)));
   const tick = Math.max(2, Math.floor(spacing * 0.34));
   const minH = 1 / dpr;
 
   for (let i = from; i <= to; i++) {
-    const x = vp.xOfIndex(i);
-    if (x < -spacing || x > vp.width + spacing) continue;
+    const x = ts.xOfIndex(i);
+    if (x < -spacing || x > ts.width + spacing) continue;
     const o = series.open[i] as number;
     const c = closeAt(input, i);
     const path = c >= o ? up : down;
     const cx = crisp(x, dpr);
-    const yHigh = vp.yOfPrice(Math.max(series.high[i] as number, c));
-    const yLow = vp.yOfPrice(Math.min(series.low[i] as number, c));
+    const yHigh = ps.yOfPrice(Math.max(series.high[i] as number, c));
+    const yLow = ps.yOfPrice(Math.min(series.low[i] as number, c));
     path.rect(cx - lineWidth / 2, yHigh, lineWidth, Math.max(minH, yLow - yHigh));
-    path.rect(cx - tick, crisp(vp.yOfPrice(o), dpr) - lineWidth / 2, tick, lineWidth);
-    path.rect(cx, crisp(vp.yOfPrice(c), dpr) - lineWidth / 2, tick, lineWidth);
+    path.rect(cx - tick, crisp(ps.yOfPrice(o), dpr) - lineWidth / 2, tick, lineWidth);
+    path.rect(cx, crisp(ps.yOfPrice(c), dpr) - lineWidth / 2, tick, lineWidth);
   }
 
   ctx.fillStyle = theme.up;
@@ -195,13 +196,13 @@ function drawBars(ctx: CanvasRenderingContext2D, input: PlotInput): void {
 
 /** Shared dense fallback: one high-low hairline per pixel column. */
 function drawDenseColumns(input: PlotInput, upPath: Path2D, downPath: Path2D): void {
-  const { series, viewport: vp, dpr, columns } = input;
+  const { series, timeScale: ts, priceScale: ps, dpr, columns } = input;
   const w = 1 / dpr;
 
   if (columns) {
     for (let i = 0; i < columns.count; i++) {
-      const yHigh = vp.yOfPrice(columns.high[i] as number);
-      const yLow = vp.yOfPrice(columns.low[i] as number);
+      const yHigh = ps.yOfPrice(columns.high[i] as number);
+      const yLow = ps.yOfPrice(columns.low[i] as number);
       const path = (columns.close[i] as number) >= (columns.open[i] as number) ? upPath : downPath;
       path.rect(columns.x[i] as number, yHigh, w, Math.max(w, yLow - yHigh));
     }
@@ -209,7 +210,7 @@ function drawDenseColumns(input: PlotInput, upPath: Path2D, downPath: Path2D): v
   }
 
   // Between one pixel and one candle body, reduce on the fly.
-  const { from, to } = visibleRange(series, vp);
+  const { from, to } = visibleRange(series, ts);
   let colX = Number.NaN;
   let colHigh = Number.NEGATIVE_INFINITY;
   let colLow = Number.POSITIVE_INFINITY;
@@ -219,8 +220,8 @@ function drawDenseColumns(input: PlotInput, upPath: Path2D, downPath: Path2D): v
 
   const flush = (): void => {
     if (colCount === 0) return;
-    const yHigh = vp.yOfPrice(colHigh);
-    const yLow = vp.yOfPrice(colLow);
+    const yHigh = ps.yOfPrice(colHigh);
+    const yLow = ps.yOfPrice(colLow);
     (colClose >= colOpen ? upPath : downPath).rect(colX, yHigh, w, Math.max(w, yLow - yHigh));
     colCount = 0;
     colHigh = Number.NEGATIVE_INFINITY;
@@ -228,8 +229,8 @@ function drawDenseColumns(input: PlotInput, upPath: Path2D, downPath: Path2D): v
   };
 
   for (let i = from; i <= to; i++) {
-    const x = vp.xOfIndex(i);
-    if (x < -1 || x > vp.width + 1) continue;
+    const x = ts.xOfIndex(i);
+    if (x < -1 || x > ts.width + 1) continue;
     const px = Math.round(x * dpr) / dpr;
     if (px !== colX) {
       flush();
@@ -255,7 +256,7 @@ function drawDenseColumns(input: PlotInput, upPath: Path2D, downPath: Path2D): v
  * out, so the path never carries more points than the screen has pixels.
  */
 function drawLine(ctx: CanvasRenderingContext2D, input: PlotInput, filled: boolean): void {
-  const { series, viewport: vp, theme, dpr, columns } = input;
+  const { series, timeScale: ts, priceScale: ps, theme, dpr, columns } = input;
   const path = new Path2D();
   let started = false;
   let firstX = 0;
@@ -264,7 +265,7 @@ function drawLine(ctx: CanvasRenderingContext2D, input: PlotInput, filled: boole
   if (columns) {
     for (let i = 0; i < columns.count; i++) {
       const x = columns.x[i] as number;
-      const y = vp.yOfPrice(columns.close[i] as number);
+      const y = ps.yOfPrice(columns.close[i] as number);
       if (!started) {
         path.moveTo(x, y);
         firstX = x;
@@ -275,16 +276,16 @@ function drawLine(ctx: CanvasRenderingContext2D, input: PlotInput, filled: boole
       lastX = x;
     }
   } else {
-    const { from, to } = visibleRange(series, vp);
+    const { from, to } = visibleRange(series, ts);
     let prevPx = Number.NaN;
     for (let i = from; i <= to; i++) {
-      const x = vp.xOfIndex(i);
-      if (x < -2 || x > vp.width + 2) continue;
+      const x = ts.xOfIndex(i);
+      if (x < -2 || x > ts.width + 2) continue;
       // Collapse points that would land on the same device pixel.
       const px = Math.round(x * dpr) / dpr;
       if (px === prevPx && i !== to) continue;
       prevPx = px;
-      const y = vp.yOfPrice(closeAt(input, i));
+      const y = ps.yOfPrice(closeAt(input, i));
       if (!started) {
         path.moveTo(x, y);
         firstX = x;
@@ -299,10 +300,10 @@ function drawLine(ctx: CanvasRenderingContext2D, input: PlotInput, filled: boole
 
   if (filled) {
     const fill = new Path2D(path);
-    fill.lineTo(lastX, vp.height);
-    fill.lineTo(firstX, vp.height);
+    fill.lineTo(lastX, ps.top + ps.height);
+    fill.lineTo(firstX, ps.top + ps.height);
     fill.closePath();
-    const gradient = ctx.createLinearGradient(0, 0, 0, vp.height);
+    const gradient = ctx.createLinearGradient(0, ps.top, 0, ps.top + ps.height);
     gradient.addColorStop(0, theme.areaTop);
     gradient.addColorStop(1, theme.areaBottom);
     ctx.fillStyle = gradient;
@@ -310,13 +311,26 @@ function drawLine(ctx: CanvasRenderingContext2D, input: PlotInput, filled: boole
   }
 
   ctx.save();
-  // Rounded joins soften a zoomed-in line, but on a path with thousands of
-  // segments they are pure rasterisation cost for no visible benefit.
-  const smooth = vp.barSpacing >= 2;
-  ctx.lineJoin = smooth ? 'round' : 'bevel';
-  ctx.lineCap = smooth ? 'round' : 'butt';
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = theme.lineColor;
-  ctx.stroke(path);
+  if (columns && columns.count > 1) {
+    // Densely packed: fill the band the line sweeps instead of stroking it,
+    // one rectangle per column. Stroking thousands of segments costs several
+    // times more for the same picture.
+    const w = 1 / dpr;
+    ctx.fillStyle = theme.lineColor;
+    for (let i = 0; i < columns.count; i++) {
+      const yA = ps.yOfPrice(columns.close[i] as number);
+      const next =
+        i + 1 < columns.count ? (columns.close[i + 1] as number) : (columns.close[i] as number);
+      const yB = ps.yOfPrice(next);
+      const top = Math.min(yA, yB);
+      ctx.fillRect(columns.x[i] as number, top, w, Math.max(1.5, Math.abs(yB - yA)));
+    }
+  } else {
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = theme.lineColor;
+    ctx.stroke(path);
+  }
   ctx.restore();
 }
