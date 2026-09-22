@@ -258,6 +258,7 @@ body {
 
 .chart-legend {
   pointer-events: none;
+  -webkit-user-select: none;
   user-select: none;
   display: flex;
   flex-direction: column;
@@ -392,7 +393,12 @@ body {
   inset: 0;
   display: grid;
   place-items: center;
+  /* The opaque fallback comes first, for browsers without color-mix: a
+     loading screen you can see through to a half-drawn chart is worse than
+     a solid one. */
+  background: var(--bg);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
   z-index: 50;
 }
@@ -730,6 +736,7 @@ body {
   display: grid;
   place-items: center;
   background: rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
 }
 
@@ -1503,11 +1510,15 @@ body {
 }
 
 .dom-row.bid .dom-bar {
-  background: color-mix(in srgb, var(--up) 18%, transparent);
+  /* A solid colour at low opacity rather than color-mix: the depth bar is
+     what the ladder is for, so it must not depend on a newer CSS function. */
+  background: var(--up);
+  opacity: 0.18;
 }
 
 .dom-row.ask .dom-bar {
-  background: color-mix(in srgb, var(--down) 18%, transparent);
+  background: var(--down);
+  opacity: 0.18;
 }
 
 .dom-row.bid .dom-price {
@@ -2441,4 +2452,87 @@ button.dom-row:hover {
 
 .account-row > button.danger:not(.account-pick):hover {
   color: var(--down);
+}
+
+/* ----------------------------------------------- crash and recovery */
+
+.crash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--bg);
+}
+
+.crash-card {
+  width: min(480px, 92vw);
+  padding: 22px 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+}
+
+.crash-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.crash-title svg {
+  color: var(--down);
+}
+
+.crash-text {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.crash-detail {
+  max-height: 140px;
+  margin: 12px 0 0;
+  padding: 9px 10px;
+  overflow: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--down);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.crash-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.crash-actions .primary-button,
+.crash-actions .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.loading-help {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.loading-card .crash-actions {
+  justify-content: center;
 }

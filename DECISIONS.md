@@ -392,3 +392,29 @@ container, which is the slow case.
   does not open a dialog.
 - **The bell carries a count of armed alerts**, which is the only piece of trading state that is
   otherwise invisible once its dialog is closed.
+
+## Final pass — recovery and browser compatibility
+
+### Recovering from a broken state
+- **A React error boundary wraps the whole app.** Without one, a single bad render leaves a blank
+  white page: no explanation, and nothing for a non-technical user to do.
+- **The two things offered are a reload and a clean slate**, because a component that crashes once
+  has almost always been handed state it cannot read, and those are the only two recoveries a user
+  can actually perform themselves. The same pair is offered when the market worker fails to start,
+  which was previously a dead end.
+- **"Start over" clears by prefix, not by a list of keys**, so a store added later cannot be left
+  behind — and it collects the keys before removing any of them, because removing while iterating by
+  index skips every other one. There is a test for exactly that.
+- **The reload happens even if clearing failed.** A reload alone fixes a transient failure, and
+  there is nothing better to offer if it does not.
+
+### Safari
+- **`color-mix` is gone from the depth ladder's bars**, replaced by a solid colour at low opacity.
+  The bar is what the ladder is for, so it must not depend on a newer CSS function; the remaining
+  uses of `color-mix` are decorative tints that degrade to nothing in particular.
+- **The loading overlay has an opaque fallback before its translucent one.** A loading screen you
+  can see through to a half-drawn chart is worse than a solid one.
+- **`-webkit-` prefixes for `backdrop-filter` and `user-select`**, which Safari only dropped in
+  versions 18 and 16.4 respectively.
+- **The production worker is a classic worker, not a module one.** Vite bundles it that way, which
+  widens support at no cost to the source, where it stays an ES module.

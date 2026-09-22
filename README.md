@@ -239,6 +239,17 @@ If you ever want a brand new David Coin history, clear the site's data in your b
 (DevTools → Application → Storage → Clear site data) and reload. The app will backfill a fresh
 30 days.
 
+## If something goes wrong
+
+If the app ever hits a problem it cannot recover from, it says so on a plain card with two buttons
+rather than going blank:
+
+- **Reload the page**, which fixes almost everything.
+- **Clear saved data and start over**, which throws away the saved market, your accounts, drawings
+  and settings, and starts a brand new market from scratch. Use it only if reloading does not help.
+
+The same two buttons appear if the market itself fails to start.
+
 ## Notes
 
 - No TradingView code, libraries, icons, names or assets are used anywhere. The charting engine is
