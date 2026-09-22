@@ -1,11 +1,14 @@
 import { create } from 'zustand';
 import { loadLocal, saveLocal } from '@/storage/local';
+import { checkLiquidation, createAccount, resetAccount } from '@/trading/engine';
 import {
-  checkLiquidation,
-  createAccount,
-  resetAccount,
-  submitMarketOrder,
-} from '@/trading/engine';
+  attachBrackets,
+  cancelAllOrders,
+  cancelOrder as cancelOrderIn,
+  modifyOrder as modifyOrderIn,
+  processOrders,
+  submitOrder as submitOrderIn,
+} from '@/trading/orders';
 import { centsToDollars, qtyToUnits, type Cents, type Qty } from '@/trading/money';
 import {
   DEFAULT_SETTINGS,
@@ -13,6 +16,7 @@ import {
   MIN_LEVERAGE,
   type Account,
   type AccountSettings,
+  type OrderRequest,
   type Quote,
   type Side,
 } from '@/trading/types';
@@ -40,12 +44,20 @@ export interface TradingState {
   lastLiquidationAt: number;
 
   active: () => Account;
+  submit: (request: OrderRequest, quote: Quote) => void;
   submitMarket: (side: Side, qty: Qty, quote: Quote) => void;
   closePosition: (quote: Quote) => void;
   reversePosition: (quote: Quote) => void;
+  cancelOrder: (id: string) => void;
+  cancelAll: () => void;
+  moveOrder: (id: string, priceCents: Cents) => void;
+  setBrackets: (patch: { takeProfitCents?: Cents; stopLossCents?: Cents }) => void;
   updateSettings: (patch: Partial<AccountSettings>) => void;
   reset: () => void;
-  /** Called on every tick; closes the position if equity has run out. */
+  /**
+   * Called on every tick: works the resting orders against the new price, then
+   * liquidates if equity has run out.
+   */
   markToMarket: (quote: Quote) => void;
 }
 
@@ -108,6 +120,14 @@ function sanitise(raw: unknown, now: number): Persisted {
 
 const initial = sanitise(loadLocal<unknown>(LS_KEY, null), Date.now());
 
+/**
+ * The last price the store saw.
+ *
+ * Kept outside the store because it is not state anyone renders — it exists
+ * only so a tick can describe the range it covered since the previous one.
+ */
+let previousPriceCents = 0;
+
 export const useTrading = create<TradingState>((set, get) => {
   const persist = (): void => {
     const s = get();
@@ -129,24 +149,35 @@ export const useTrading = create<TradingState>((set, get) => {
       return (s.accounts.find((a) => a.id === s.activeId) ?? s.accounts[0]) as Account;
     },
 
-    submitMarket: (side, qty, quote) => {
+    submit: (request, quote) => {
       const account = get().active();
-      const result = submitMarketOrder(account, side, qty, quote);
-      if (result.order.status === 'rejected') {
-        notify({
-          tone: 'error',
-          title: 'Order rejected',
-          body: result.order.reason ?? 'The order could not be filled.',
-        });
+      const result = submitOrderIn(account, request, quote);
+      if (result.rejected) {
+        notify({ tone: 'error', title: 'Order rejected', body: result.rejected });
         return;
       }
       replace(result.account);
+
+      if (result.order.status === 'working') {
+        notify({
+          tone: 'info',
+          title: `${request.side === 'buy' ? 'Buy' : 'Sell'} ${request.type} order placed`,
+          body: `${qtyToUnits(result.order.qty)} DAVID at $${formatUsd(
+            (result.order.limitCents ?? result.order.stopCents ?? quote.lastCents) as number,
+          )}`,
+        });
+        return;
+      }
       const price = result.order.fillPriceCents ?? quote.lastCents;
       notify({
-        tone: side === 'buy' ? 'success' : 'info',
-        title: `${side === 'buy' ? 'Bought' : 'Sold'} ${qtyToUnits(result.order.qty)} DAVID`,
-        body: `at $${centsToDollars(price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        tone: request.side === 'buy' ? 'success' : 'info',
+        title: `${request.side === 'buy' ? 'Bought' : 'Sold'} ${qtyToUnits(result.order.qty)} DAVID`,
+        body: `at $${formatUsd(price)}`,
       });
+    },
+
+    submitMarket: (side, qty, quote) => {
+      get().submit({ side, type: 'market', qty }, quote);
     },
 
     closePosition: (quote) => {
@@ -162,6 +193,40 @@ export const useTrading = create<TradingState>((set, get) => {
       if (qty === 0) return;
       // Twice the size takes it through flat and out the other side.
       get().submitMarket(qty > 0 ? 'sell' : 'buy', Math.abs(qty) * 2, quote);
+    },
+
+    cancelOrder: (id) => {
+      const account = get().active();
+      if (!account.orders.some((o) => o.id === id && o.status === 'working')) return;
+      replace(cancelOrderIn(account, id));
+      notify({ tone: 'info', title: 'Order cancelled' });
+    },
+
+    cancelAll: () => {
+      const account = get().active();
+      const count = account.orders.filter((o) => o.status === 'working').length;
+      if (count === 0) return;
+      replace(cancelAllOrders(account));
+      notify({ tone: 'info', title: `${count} order${count === 1 ? '' : 's'} cancelled` });
+    },
+
+    moveOrder: (id, priceCents) => {
+      const account = get().active();
+      const order = account.orders.find((o) => o.id === id);
+      if (!order || order.status !== 'working') return;
+      // Which price to move depends on the order type: a stop-limit keeps its
+      // limit where it is and its trigger is what the line represents.
+      const patch =
+        order.type === 'limit'
+          ? { limitCents: priceCents }
+          : { stopCents: priceCents };
+      replace(modifyOrderIn(account, id, patch));
+    },
+
+    setBrackets: (patch) => {
+      const account = get().active();
+      if (account.position.qty === 0) return;
+      replace(attachBrackets(account, patch, Date.now()));
     },
 
     updateSettings: (patch) => {
@@ -187,7 +252,35 @@ export const useTrading = create<TradingState>((set, get) => {
     },
 
     markToMarket: (quote) => {
-      const account = get().active();
+      let account = get().active();
+      const hasWork = account.orders.some((o) => o.status === 'working');
+
+      if (hasWork) {
+        // The range covered since the previous tick, so an order is filled
+        // when the market traded through it even if no tick landed on it.
+        const previous = previousPriceCents;
+        const range = {
+          lowCents: Math.min(previous || quote.lastCents, quote.lastCents),
+          highCents: Math.max(previous || quote.lastCents, quote.lastCents),
+        };
+        const worked = processOrders(account, quote, range);
+        if (worked.executions.length > 0 || worked.cancelled.length > 0) {
+          replace(worked.account);
+          account = worked.account;
+          for (const execution of worked.executions) {
+            const order = worked.account.orders.find((o) => o.id === execution.orderId);
+            const label =
+              order?.tag === 'tp' ? 'Take-profit filled' : order?.tag === 'sl' ? 'Stop-loss filled' : 'Order filled';
+            notify({
+              tone: execution.realisedCents >= 0 ? 'success' : 'warning',
+              title: label,
+              body: `${qtyToUnits(execution.qty)} DAVID at $${formatUsd(execution.priceCents)}`,
+            });
+          }
+        }
+      }
+      previousPriceCents = quote.lastCents;
+
       if (account.position.qty === 0) return;
       const result = checkLiquidation(account, quote);
       if (!result.execution) return;

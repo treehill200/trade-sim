@@ -6,10 +6,9 @@ single-page web app with an interface modelled on a professional charting termin
 Everything is simulated: the prices, the order book, the fills and the account. There is no real
 market data, no real money, and no server. It all runs in your browser.
 
-> **Build status:** Phases 1-5 of 7 are complete — the market engine, the chart, the indicators, the
-> drawing tools and the trading engine. Limit and stop orders, brackets, on-chart order lines and
-> the journal arrive in the last two phases. See `DECISIONS.md` for the running log of technical
-> choices.
+> **Build status:** Phases 1-6 of 7 are complete. The last phase adds the trade journal and
+> statistics, price alerts, multiple accounts and the final polish. See `DECISIONS.md` for the
+> running log of technical choices.
 
 ## Running it
 
@@ -73,6 +72,16 @@ The panel on the right places orders; the panel along the bottom tracks the acco
 - **Buy or sell at market** — pick a side, type a size in DAVID, in USD, or as a percentage of what
   your leverage lets you put to work, and submit. The summary shows the trade value, the margin it
   needs and what you have available before you commit.
+- **Limit, stop and stop-limit orders** rest until the market reaches them. A limit gets its own
+  price; a stop triggers on the last price and then fills at market, slippage and all.
+- **Take-profit and stop-loss brackets**, set by price, ticks, percentage or dollar amount. They are
+  linked: whichever fills first cancels the other, and closing the position by any route cancels
+  both.
+- **Manage orders on the chart.** Working orders appear as labelled lines with an X to cancel, and
+  you can drag a line to move the order. The position line shows its size and live P&L with buttons
+  to add brackets, reverse or close. Arrows mark every candle where a fill happened.
+- **Trade from the DOM.** Click a level in the depth ladder for a limit order there, or hold shift
+  for a stop.
 - **One net position per account.** Buying while short reduces the short, and a big enough order
   reverses straight through flat. The Positions row has Reverse and Close buttons.
 - **Leverage from 1x to 125x**, custom starting balance, maker and taker commissions, maintenance

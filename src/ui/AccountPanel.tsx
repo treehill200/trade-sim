@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, RotateCcw, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, RotateCcw, Trash2, X } from 'lucide-react';
 import { formatCents, formatSignedCents } from '@/chart/format';
 import { useTrading } from '@/state/tradingStore';
 import { accountMetrics } from '@/trading/metrics';
@@ -30,6 +30,8 @@ export function AccountPanel(): JSX.Element {
   const account = useTrading((s) => s.active());
   const closePosition = useTrading((s) => s.closePosition);
   const reversePosition = useTrading((s) => s.reversePosition);
+  const cancelOrder = useTrading((s) => s.cancelOrder);
+  const cancelAll = useTrading((s) => s.cancelAll);
   const reset = useTrading((s) => s.reset);
   const quote = currentQuote();
   const metrics = accountMetrics(account, quote);
@@ -172,18 +174,27 @@ export function AccountPanel(): JSX.Element {
                     <th>Type</th>
                     <th>Qty</th>
                     <th>Price</th>
-                    <th />
+                    <th>
+                      {workingOrders.length > 1 && (
+                        <button className="link-button" onClick={cancelAll}>
+                          Cancel all
+                        </button>
+                      )}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {workingOrders.length === 0 ? (
                     <tr>
                       <td className="empty" colSpan={6}>
-                        No working orders. Limit and stop orders arrive in the next phase.
+                        No working orders. Place a limit or stop order from the panel on the right,
+                        or click a level on the DOM.
                       </td>
                     </tr>
                   ) : (
-                    workingOrders.map((o) => <OrderRow key={o.id} order={o} />)
+                    workingOrders.map((o) => (
+                      <OrderRow key={o.id} order={o} onCancel={() => cancelOrder(o.id)} />
+                    ))
                   )}
                 </tbody>
               </table>
@@ -247,15 +258,23 @@ function Metric({
   );
 }
 
-function OrderRow({ order }: { order: Order }): JSX.Element {
+function OrderRow({ order, onCancel }: { order: Order; onCancel: () => void }): JSX.Element {
+  const price = order.limitCents ?? order.stopCents;
   return (
     <tr>
       <td>{new Date(order.createdAt).toLocaleTimeString('en-GB')}</td>
       <td className={order.side === 'buy' ? 'up' : 'down'}>{order.side === 'buy' ? 'Buy' : 'Sell'}</td>
-      <td>{order.type}</td>
+      <td>
+        {order.tag === 'tp' ? 'take profit' : order.tag === 'sl' ? 'stop loss' : order.type}
+        {order.triggered ? ' (triggered)' : ''}
+      </td>
       <td>{qtyToUnits(order.qty).toFixed(4)}</td>
-      <td>{order.limitCents ?? order.stopCents ? formatCents((order.limitCents ?? order.stopCents) as number) : '—'}</td>
-      <td />
+      <td>{price ? formatCents(price) : '—'}</td>
+      <td className="row-actions">
+        <button className="danger" onClick={onCancel}>
+          <Trash2 size={11} /> Cancel
+        </button>
+      </td>
     </tr>
   );
 }

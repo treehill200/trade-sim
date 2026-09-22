@@ -272,3 +272,49 @@ container, which is the slow case.
   mid-session would make the realised-profit figures meaningless.
 - **Notices are a small store with a render-time timer**, so a liquidation can be reported from
   outside React and still appear as a toast.
+
+## Phase 6 — resting orders, brackets and on-chart order management
+
+### Order semantics
+- **A resting limit fills at its own price.** It was already in the book when the market reached it,
+  so a gap straight through does not improve the fill — and never worsens it. This was wrong on the
+  first attempt ("limit or better"), which handed the trader a better price than they had asked for
+  whenever the market gapped past a resting order; the tests caught it.
+- **A limit placed through the spread is an aggressive order.** It takes liquidity immediately at
+  the market price, capped at its own limit, and pays the taker fee — which is what a real venue
+  does with a marketable limit.
+- **Stops trigger on the last price and then fill at market**, so they take slippage exactly as a
+  manual market order would. A stop-limit's trigger latches: once hit, it stays a resting limit even
+  if the price comes back.
+- **Fills are matched against the range the price covered since the previous tick**, not against the
+  tick itself, so an order is filled when the market traded through it even though no tick landed on
+  its exact price.
+- **Limits pay the maker fee, stops the taker fee**, because one was the resting side of the trade
+  and the other was not.
+
+### Brackets
+- **OCO is one shared group id.** A take-profit and its stop-loss carry the same group; whichever
+  fills first cancels the other. That is the entire mechanism.
+- **Exits are reduce-only** and are clamped to the position's current size, so a bracket placed on a
+  larger position cannot flip it after the position has been partly closed.
+- **A single violent move that crosses both exits fills exactly one of them.** Orders are processed
+  in sequence and each fill re-checks the ones after it.
+- **Brackets ride along on the entry order** and are turned into real orders the moment it fills, so
+  a limit entry with exits attaches them when it triggers rather than immediately.
+- **Flattening the position by any route cancels every reduce-only order**, so closing by hand never
+  leaves an orphaned stop behind.
+
+### On-chart management
+- **The lines are computed from the account, not stored.** The chart therefore cannot show an order
+  or a position that does not exist, and there is no state to keep in sync.
+- **Lines are drawn on the canvas; their buttons are HTML.** The line has to pan and zoom with the
+  chart, but a cancel button should be a real button with a real hit area — so the canvas draws the
+  line, the label and the axis tag, and an overlay positions the controls by reading the chart's
+  mapping through a plain holder rather than React state. The render loop stays free of React.
+- **Only working orders are draggable.** A position's entry and its liquidation price are
+  consequences of the position, not values a user can set.
+- **Execution markers point away from the candle** — buys below, sells above — so a marker never
+  hides the price action it refers to, and a liquidation gets a ring so it reads differently from a
+  manual fill.
+- **The DOM places a limit on click and a stop on shift-click.** A limit at a level is what resting
+  there means; a stop is the breakout order, so it takes the modifier.

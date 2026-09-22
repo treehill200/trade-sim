@@ -56,6 +56,40 @@ export interface Order {
   reason?: string;
   /** True when the engine created this order itself, e.g. a liquidation. */
   system?: boolean;
+  /**
+   * Orders that cancel each other.
+   *
+   * A take-profit and its stop-loss share a group: whichever fills first, the
+   * other is pulled. That is the whole of OCO.
+   */
+  ocoGroup?: string;
+  /** Never grows the position; cancelled outright once the position is flat. */
+  reduceOnly?: boolean;
+  /** Bracket exits to attach once this entry fills. */
+  bracket?: { takeProfitCents?: Cents; stopLossCents?: Cents };
+  /** Set on a stop-limit once its trigger has been hit. */
+  triggered?: boolean;
+  /** Human label for the chart, e.g. "TP" or "SL". */
+  tag?: 'tp' | 'sl';
+}
+
+/** What the UI asks the engine to do. */
+export interface OrderRequest {
+  side: Side;
+  type: OrderType;
+  qty: Qty;
+  limitCents?: Cents;
+  stopCents?: Cents;
+  takeProfitCents?: Cents;
+  stopLossCents?: Cents;
+  reduceOnly?: boolean;
+  tag?: 'tp' | 'sl';
+}
+
+/** The price range covered since the previous tick, for crossing tests. */
+export interface PriceRange {
+  lowCents: Cents;
+  highCents: Cents;
 }
 
 export interface Execution {

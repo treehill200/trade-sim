@@ -33,6 +33,13 @@ import {
 } from '@/drawings/placement';
 import type { Drawing, DrawingPoint } from '@/drawings/types';
 import { useDrawings } from '@/state/drawingsStore';
+import { chartMapping } from './chartMapping';
+import { drawExecutionMarkers, drawTradingLines } from './tradingLayer';
+import { chartLines } from '@/trading/chartLines';
+import { accountMetrics } from '@/trading/metrics';
+import { useTrading } from '@/state/tradingStore';
+import { currentQuote } from '@/ui/useQuote';
+import { OrderLineControls } from '@/ui/OrderLineControls';
 import { DrawingContextMenu } from '@/ui/DrawingContextMenu';
 import { TextLabelEditor } from '@/ui/TextLabelEditor';
 import { ChartLegend } from '@/ui/ChartLegend';
@@ -132,6 +139,8 @@ export function ChartCanvas(): JSX.Element {
    * Opening it on pointerup sidesteps that entirely.
    */
   const pendingTextRef = useRef<{ id: string; x: number; y: number } | null>(null);
+  /** The order line being dragged to a new price, if any. */
+  const lineDragRef = useRef<{ orderId: string } | null>(null);
 
   const theme = useUi((s) => s.theme);
   const timeframe = useUi((s) => s.timeframe);
@@ -278,6 +287,9 @@ export function ChartCanvas(): JSX.Element {
       const tfMs = TF_SECONDS[timeframe] * 1000;
       mapRef.current = new DrawingMap(series, tfMs, ts, mainScale);
       boundsRef.current = { width: ts.width, top: mainScale.top, height: mainScale.height };
+      chartMapping.map = mapRef.current;
+      chartMapping.bounds = boundsRef.current;
+      chartMapping.axisWidth = PRICE_AXIS_WIDTH;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
@@ -316,6 +328,27 @@ export function ChartCanvas(): JSX.Element {
         selectedId: dw.selectedId,
         hidden: dw.hidden,
       });
+
+      // The account's lines and fill markers go on top of the drawings, so an
+      // order line is never hidden behind a rectangle.
+      const trading = useTrading.getState();
+      const account = trading.active();
+      const quote = currentQuote();
+      if (quote.lastCents > 0) {
+        const layer = {
+          lines: chartLines(account, accountMetrics(account, quote)),
+          executions: account.executions,
+          series,
+          map: mapRef.current,
+          timeScale: ts,
+          priceScale: mainScale,
+          theme: themeByName(theme),
+          dpr,
+          controlsWidth: 96,
+        };
+        drawExecutionMarkers(ctx, layer);
+        drawTradingLines(ctx, layer);
+      }
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -367,6 +400,27 @@ export function ChartCanvas(): JSX.Element {
     },
     [],
   );
+
+  /**
+   * The working-order line under the pointer, if any.
+   *
+   * Only orders are draggable: the position's entry and its liquidation price
+   * are consequences of the position, not things the user can move.
+   */
+  const orderLineAt = useCallback((x: number, y: number): string | null => {
+    const map = mapRef.current;
+    if (!map || x > timeScaleRef.current.width) return null;
+    const trading = useTrading.getState();
+    const account = trading.active();
+    const quote = currentQuote();
+    if (quote.lastCents <= 0) return null;
+    const lines = chartLines(account, accountMetrics(account, quote));
+    for (const line of lines) {
+      if (!line.draggable || !line.orderId) continue;
+      if (Math.abs(map.yOfPrice(line.priceCents) - y) <= 5) return line.orderId;
+    }
+    return null;
+  }, []);
 
   const cancelPlacement = useCallback(() => {
     placeRef.current = { kind: 'idle' };
@@ -489,6 +543,12 @@ export function ChartCanvas(): JSX.Element {
           return;
         }
 
+        const lineId = orderLineAt(x, y);
+        if (lineId) {
+          lineDragRef.current = { orderId: lineId };
+          return;
+        }
+
         const hitDrawing = drawingAt(x, y);
         if (hitDrawing) {
           dw.select(hitDrawing.drawing.id);
@@ -502,7 +562,7 @@ export function ChartCanvas(): JSX.Element {
       const hit = hitTest(x, y);
       dragRef.current = { mode: hit.mode, x, y, paneId: hit.paneId, index: hit.index };
     },
-    [hitTest, dataPointAt, drawingAt, commitPlacement],
+    [hitTest, dataPointAt, drawingAt, commitPlacement, orderLineAt],
   );
 
   const onPointerMove = useCallback(
@@ -535,6 +595,17 @@ export function ChartCanvas(): JSX.Element {
         }
       }
 
+      const lineDrag = lineDragRef.current;
+      if (lineDrag) {
+        const map = mapRef.current;
+        if (map) {
+          const price = Math.round(map.priceOfY(y));
+          if (price > 0) useTrading.getState().moveOrder(lineDrag.orderId, price);
+        }
+        crosshairRef.current = { x, y, visible: true };
+        return;
+      }
+
       const drawDrag = drawDragRef.current;
       if (drawDrag) {
         const at = dataPointAt(x, y);
@@ -565,6 +636,10 @@ export function ChartCanvas(): JSX.Element {
         const dw = useDrawings.getState();
         if (dw.tool !== 'cursor') {
           setCursorOverride((prev) => (prev === 'crosshair' ? prev : 'crosshair'));
+          return;
+        }
+        if (orderLineAt(x, y)) {
+          setCursorOverride((prev) => (prev === 'ns-resize' ? prev : 'ns-resize'));
           return;
         }
         if (drawingAt(x, y)) {
@@ -623,6 +698,7 @@ export function ChartCanvas(): JSX.Element {
         useDrawings.getState().commit();
         drawDragRef.current = null;
       }
+      lineDragRef.current = null;
       const pendingText = pendingTextRef.current;
       if (pendingText) {
         pendingTextRef.current = null;
@@ -832,6 +908,7 @@ export function ChartCanvas(): JSX.Element {
         <QuickTrade />
       </div>
       <PaneLegends rows={legendRows} hoverIndex={hoverIndex} />
+      <OrderLineControls />
       {!atRealtime && <ScrollToRealtime onClick={goRealtime} />}
       {contextMenu && (
         <DrawingContextMenu {...contextMenu} onClose={() => setContextMenu(null)} />
