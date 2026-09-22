@@ -1,20 +1,36 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, RotateCcw, Trash2, X } from 'lucide-react';
-import { formatCents, formatSignedCents } from '@/chart/format';
+import { formatCents, formatPercent, formatSignedCents } from '@/chart/format';
 import { useTrading } from '@/state/tradingStore';
 import { accountMetrics } from '@/trading/metrics';
+import { buildTrips, equityCurve, tradeStats, tripUnits, type Trip } from '@/trading/journal';
 import { qtyToUnits } from '@/trading/money';
 import type { Execution, Order } from '@/trading/types';
 import { currentQuote } from './useQuote';
 import { useMarketPulse } from './useMarket';
+import { AccountSwitcher } from './AccountSwitcher';
+import { EquityCurve } from './EquityCurve';
 
-type Tab = 'positions' | 'orders' | 'history';
+type Tab = 'positions' | 'orders' | 'history' | 'journal' | 'stats';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'positions', label: 'Positions' },
   { id: 'orders', label: 'Working Orders' },
   { id: 'history', label: 'Order History' },
+  { id: 'journal', label: 'Trade Journal' },
+  { id: 'stats', label: 'Stats' },
 ];
+
+/** Milliseconds rendered as the shortest sensible unit. */
+function formatDuration(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ${minutes % 60}m`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
 
 /** Minimum and maximum height of the panel when open, in pixels. */
 const MIN_HEIGHT = 120;
@@ -32,6 +48,7 @@ export function AccountPanel(): JSX.Element {
   const reversePosition = useTrading((s) => s.reversePosition);
   const cancelOrder = useTrading((s) => s.cancelOrder);
   const cancelAll = useTrading((s) => s.cancelAll);
+  const setNote = useTrading((s) => s.setNote);
   const reset = useTrading((s) => s.reset);
   const quote = currentQuote();
   const metrics = accountMetrics(account, quote);
@@ -55,6 +72,14 @@ export function AccountPanel(): JSX.Element {
 
   const workingOrders = account.orders.filter((o) => o.status === 'working');
   const history = [...account.orders].reverse().slice(0, 200);
+  // Round trips and statistics are derived, so they can never disagree with
+  // the order history they come from.
+  const trips = useMemo(() => buildTrips(account.executions), [account.executions]);
+  const stats = useMemo(() => tradeStats(trips), [trips]);
+  const curve = useMemo(
+    () => equityCurve(trips, account.settings.startingBalanceCents),
+    [trips, account.settings.startingBalanceCents],
+  );
 
   return (
     <section className="account-panel" style={{ height: collapsed ? 34 : height + 34 }}>
@@ -83,8 +108,8 @@ export function AccountPanel(): JSX.Element {
         <Metric label="Fees paid" value={formatCents(metrics.feesCents)} />
 
         <div className="summary-actions">
-          <span className="account-name">{account.name}</span>
-          <button className="icon-button" title="Reset account" onClick={reset}>
+          <AccountSwitcher />
+          <button className="icon-button" title="Reset this account" onClick={reset}>
             <RotateCcw size={14} />
           </button>
           <button
@@ -105,6 +130,9 @@ export function AccountPanel(): JSX.Element {
                 {t.label}
                 {t.id === 'orders' && workingOrders.length > 0 && (
                   <span className="tab-count">{workingOrders.length}</span>
+                )}
+                {t.id === 'journal' && trips.length > 0 && (
+                  <span className="tab-count">{trips.length}</span>
                 )}
               </button>
             ))}
@@ -233,10 +261,147 @@ export function AccountPanel(): JSX.Element {
                 </tbody>
               </table>
             )}
+            {tab === 'journal' && (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Opened</th>
+                    <th>Side</th>
+                    <th>Qty</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Gross</th>
+                    <th>Fees</th>
+                    <th>Net</th>
+                    <th>Held</th>
+                    <th>Note</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trips.length === 0 ? (
+                    <tr>
+                      <td className="empty" colSpan={10}>
+                        No completed round trips yet. A trip is recorded once a position returns to
+                        flat.
+                      </td>
+                    </tr>
+                  ) : (
+                    [...trips].reverse().map((trip) => (
+                      <JournalRow
+                        key={trip.id}
+                        trip={trip}
+                        note={account.notes[trip.id] ?? ''}
+                        onNote={(note) => setNote(trip.id, note)}
+                      />
+                    ))
+                  )}
+                </tbody>
+              </table>
+            )}
+
+            {tab === 'stats' && (
+              <div className="stats-pane">
+                <div className="stats-grid">
+                  <Stat label="Trades" value={String(stats.trips)} />
+                  <Stat
+                    label="Win rate"
+                    value={stats.trips === 0 ? '—' : formatPercent(stats.winRate, 1).replace('+', '')}
+                    tone={stats.winRate >= 0.5 ? 1 : -1}
+                  />
+                  <Stat label="Wins / losses" value={`${stats.wins} / ${stats.losses}`} />
+                  <Stat label="Average win" value={formatSignedCents(stats.avgWinCents)} tone={1} />
+                  <Stat label="Average loss" value={formatSignedCents(stats.avgLossCents)} tone={-1} />
+                  <Stat
+                    label="Profit factor"
+                    value={
+                      stats.trips === 0
+                        ? '—'
+                        : stats.profitFactor === Number.POSITIVE_INFINITY
+                          ? '∞'
+                          : stats.profitFactor.toFixed(2)
+                    }
+                    tone={stats.profitFactor >= 1 ? 1 : -1}
+                  />
+                  <Stat
+                    label="Expectancy"
+                    value={formatSignedCents(stats.expectancyCents)}
+                    tone={stats.expectancyCents}
+                  />
+                  <Stat label="Largest win" value={formatSignedCents(stats.largestWinCents)} tone={1} />
+                  <Stat
+                    label="Largest loss"
+                    value={formatSignedCents(stats.largestLossCents)}
+                    tone={-1}
+                  />
+                  <Stat label="Max drawdown" value={formatCents(stats.maxDrawdownCents)} tone={-1} />
+                  <Stat label="Best streak" value={`${stats.bestStreak} wins`} tone={1} />
+                  <Stat label="Worst streak" value={`${stats.worstStreak} losses`} tone={-1} />
+                  <Stat label="Fees paid" value={formatCents(stats.feesCents)} />
+                  <Stat
+                    label="Net result"
+                    value={formatSignedCents(stats.netCents)}
+                    tone={stats.netCents}
+                  />
+                </div>
+                <div className="stats-chart">
+                  <div className="stats-chart-title">Equity curve</div>
+                  <EquityCurve points={curve} />
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}
     </section>
+  );
+}
+
+function Stat({ label, value, tone = 0 }: { label: string; value: string; tone?: number }): JSX.Element {
+  const cls = tone > 0 ? 'up' : tone < 0 ? 'down' : '';
+  return (
+    <div className="stat">
+      <span className="stat-label">{label}</span>
+      <span className={`stat-value ${cls}`}>{value}</span>
+    </div>
+  );
+}
+
+function JournalRow({
+  trip,
+  note,
+  onNote,
+}: {
+  trip: Trip;
+  note: string;
+  onNote: (note: string) => void;
+}): JSX.Element {
+  const [draft, setDraft] = useState(note);
+  return (
+    <tr className={trip.liquidated ? 'system-row' : ''}>
+      <td>{new Date(trip.openedAt).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'medium' })}</td>
+      <td className={trip.direction === 'long' ? 'up' : 'down'}>
+        {trip.direction === 'long' ? 'Long' : 'Short'}
+        {trip.liquidated ? ' (liq)' : ''}
+      </td>
+      <td>{tripUnits(trip).toFixed(4)}</td>
+      <td>{formatCents(trip.avgEntryCents)}</td>
+      <td>{formatCents(trip.avgExitCents)}</td>
+      <td className={trip.grossCents >= 0 ? 'up' : 'down'}>{formatSignedCents(trip.grossCents)}</td>
+      <td>{formatCents(trip.feesCents)}</td>
+      <td className={trip.netCents >= 0 ? 'up' : 'down'}>{formatSignedCents(trip.netCents)}</td>
+      <td>{formatDuration(trip.durationMs)}</td>
+      <td className="note-cell">
+        <input
+          value={draft}
+          placeholder="Add a note"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => onNote(draft)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+          }}
+        />
+      </td>
+    </tr>
   );
 }
 

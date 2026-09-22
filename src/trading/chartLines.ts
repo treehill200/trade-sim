@@ -3,8 +3,8 @@ import { qtyToUnits, type Cents } from './money';
 import type { AccountMetrics } from './metrics';
 import type { Account, Order } from './types';
 
-export type LineKind = 'entry' | 'liquidation' | 'order' | 'tp' | 'sl';
-export type LineTone = 'up' | 'down' | 'accent' | 'muted';
+export type LineKind = 'entry' | 'liquidation' | 'order' | 'tp' | 'sl' | 'alert';
+export type LineTone = 'up' | 'down' | 'accent' | 'muted' | 'warn';
 
 /**
  * A horizontal line the chart draws for the account.
@@ -21,6 +21,8 @@ export interface ChartLine {
   tone: LineTone;
   /** Working order this line represents, when there is one. */
   orderId?: string;
+  /** Price alert this line represents, when there is one. */
+  alertId?: string;
   /** Only working orders can be dragged to a new price. */
   draggable: boolean;
 }
@@ -82,4 +84,21 @@ export function chartLines(account: Account, metrics: AccountMetrics): ChartLine
   }
 
   return lines;
+}
+
+/** Lines for the armed price alerts, drawn alongside the account's own. */
+export function alertChartLines(
+  alerts: { id: string; priceCents: Cents; direction: 'above' | 'below'; armed: boolean }[],
+): ChartLine[] {
+  return alerts
+    .filter((a) => a.armed)
+    .map((a) => ({
+      id: `alert-${a.id}`,
+      kind: 'alert' as const,
+      priceCents: a.priceCents,
+      label: `Alert ${a.direction === 'above' ? '↑' : '↓'} ${formatCents(a.priceCents)}`,
+      tone: 'warn' as const,
+      alertId: a.id,
+      draggable: true,
+    }));
 }

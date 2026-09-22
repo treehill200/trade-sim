@@ -118,6 +118,8 @@ export interface Account {
   realisedPnlCents: Cents;
   /** Cumulative commission paid. */
   feesCents: Cents;
+  /** Free-text notes against a round trip, keyed by its id. */
+  notes: Record<string, string>;
   createdAt: number;
 }
 

@@ -27,6 +27,8 @@ export interface ChartTheme {
   lastPriceLine: string;
   lastPriceGlow: string;
   accent: string;
+  /** Amber, for alerts and cautions. */
+  warn: string;
   /** Line/area chart stroke. */
   lineColor: string;
   /** Top and bottom stops of the area chart's gradient fill. */
@@ -60,6 +62,7 @@ export const DARK_THEME: ChartTheme = {
   lastPriceLine: '#b0b6c3',
   lastPriceGlow: 'rgba(150, 175, 215, 0.14)',
   accent: '#3b82f6',
+  warn: '#f2b03d',
   lineColor: '#4d9cf6',
   areaTop: 'rgba(77, 156, 246, 0.28)',
   areaBottom: 'rgba(77, 156, 246, 0.01)',
@@ -91,6 +94,7 @@ export const LIGHT_THEME: ChartTheme = {
   lastPriceLine: '#4b5563',
   lastPriceGlow: 'rgba(70, 110, 180, 0.12)',
   accent: '#2563eb',
+  warn: '#d98b12',
   lineColor: '#2563eb',
   areaTop: 'rgba(37, 99, 235, 0.22)',
   areaBottom: 'rgba(37, 99, 235, 0.01)',

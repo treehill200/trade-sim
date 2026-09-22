@@ -318,3 +318,77 @@ container, which is the slow case.
   manual fill.
 - **The DOM places a limit on click and a stop on shift-click.** A limit at a level is what resting
   there means; a stop is the breakout order, so it takes the modifier.
+
+## Phase 7 — journal, statistics, alerts, accounts and polish
+
+### The trade journal
+- **A "trip" is derived from the execution log, never stored.** The journal walks the fills in order
+  and closes a trip whenever the net position returns to flat, so the round-trip table is always
+  consistent with the fills that produced it — there is no second record to keep in sync.
+- **A reversal closes one trip and opens the next in the same fill.** The order that flips a long
+  into a short is the exit of the long and the entry of the short; the new trip gets the id
+  `${executionId}-r` so it is still stable across reloads.
+- **A trip's entry and exit prices are size-weighted averages**, because a position built or closed
+  in pieces has no single price.
+- **Fees are attributed to the trip that paid them**, so the net figure in the journal is what
+  actually hit the balance rather than a gross number with a footnote.
+- **Notes are keyed by trip id, on the account.** Each note belongs to a specific round trip, and
+  because trip ids are derived deterministically from the fills, a note stays attached to its trade
+  after a reload.
+
+### Statistics
+- **Every statistic is computed from the trips on the fly**, not accumulated as trades happen. It is
+  cheap (a few hundred trips at most), and it means resetting or switching an account cannot leave a
+  stale counter behind.
+- **Win rate counts trips, not fills**, which is what a trader means by it.
+- **Profit factor with no losses is ∞ rather than a divide-by-zero**, shown as "∞" instead of a
+  number that would look like a bug.
+- **Max drawdown is measured on the closed-trade equity curve**, so it is the drawdown of the
+  realised record and does not swing around with an open position's mark.
+
+### The equity curve
+- **Its own small canvas rather than a pane on the main chart.** Its x axis is trade number, not
+  time, so it does not belong on a price chart at all.
+- **It is filled down to the starting balance**, so the shaded area reads as profit or loss at a
+  glance, and it is coloured by the final result rather than segment by segment.
+- **A ResizeObserver redraws it** because the account panel is resizable, so measuring once at mount
+  would leave a stretched canvas.
+
+### Price alerts
+- **An alert is checked against the range the price covered since the previous tick**, exactly as
+  orders are, so a fast move cannot slip between two samples and leave the alert armed.
+- **Alerts are one-shot and stay in the list, disarmed.** A repeating alert would spam the moment
+  the price sits on the level; keeping the fired alert visible with a re-arm button is more useful
+  than deleting it.
+- **The direction is inferred from where you put it** — above the market means "on the way up" —
+  because that is what dropping a line at a price means, and it removes a choice nobody wants to
+  make.
+- **Alert lines live on the chart and can be dragged**, using the same order-line machinery, so
+  moving an alert works the way moving an order does.
+- **Sounds are synthesised with the Web Audio API, not shipped as files.** One beep is not worth a
+  request, and audio is blocked until the user has interacted with the page — so every call is
+  wrapped and a failure is simply silence.
+- **The alert chime and the fill tone are deliberately different** (two rising notes versus one
+  short note, rising for a buy and falling for a sell) so they are never confused when both happen
+  at once.
+- **Spoken fills go through `speechSynthesis` and cancel whatever was being said.** In a fast market
+  the current fill matters and a backlog of announcements does not.
+
+### Multiple accounts
+- **The store holds an array of accounts and an active id**, and every action operates on the active
+  one. Nothing else in the app had to learn that accounts are plural.
+- **A new account inherits the current account's settings**, because the usual reason to make one is
+  to try the same setup again.
+- **Deleting an account needs a second click**, and the last account cannot be deleted, so there is
+  always somewhere for a fill to go.
+- **The account popover is positioned in viewport coordinates.** The summary strip scrolls
+  horizontally and sits at the bottom of the window, so a popover in normal flow would be clipped by
+  the strip and would open off the bottom of the screen.
+
+### Polish
+- **The shortcut list is one dialog, opened by `?`**, and it is the only place shortcuts are
+  documented in the app, so there is nowhere for a second list to fall out of date.
+- **`?` is ignored while a text field has focus**, so typing a question mark in a note or a label
+  does not open a dialog.
+- **The bell carries a count of armed alerts**, which is the only piece of trading state that is
+  otherwise invisible once its dialog is closed.

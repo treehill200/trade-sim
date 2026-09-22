@@ -28,6 +28,7 @@ function toneColor(tone: LineTone, theme: ChartTheme): string {
   if (tone === 'up') return theme.up;
   if (tone === 'down') return theme.down;
   if (tone === 'accent') return theme.accent;
+  if (tone === 'warn') return theme.warn;
   return theme.textMuted;
 }
 

@@ -1,7 +1,9 @@
 import {
   BarChart3,
+  Bell,
   Camera,
   CandlestickChart,
+  Keyboard,
   LineChart,
   Maximize2,
   Minimize2,
@@ -13,10 +15,13 @@ import {
 import { useEffect, useState } from 'react';
 import { ChartTypeMenu } from './ChartTypeMenu';
 import { IndicatorsDialog } from './IndicatorsDialog';
+import { AlertsDialog } from './AlertsDialog';
+import { ShortcutsDialog } from './ShortcutsDialog';
 import { CursorMenu } from './CursorMenu';
 import { chartController } from '@/chart/chartController';
 import { TIMEFRAMES, type Timeframe } from '@/engine/timeframes';
 import { useUi } from '@/state/store';
+import { useAlerts } from '@/state/alertsStore';
 import { marketClient } from '@/state/marketClient';
 import { formatCents, formatPercent } from '@/chart/format';
 import { useMarketPulse } from './useMarket';
@@ -28,11 +33,28 @@ export function TopToolbar(): JSX.Element {
   useMarketPulse(4);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [indicatorsOpen, setIndicatorsOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const armedAlerts = useAlerts((s) => s.alerts.filter((a) => a.armed).length);
 
   useEffect(() => {
     const onChange = () => setIsFullscreen(document.fullscreenElement !== null);
     document.addEventListener('fullscreenchange', onChange);
     return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  // A global '?' opens the shortcut list, unless the user is typing somewhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '?' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
+      if (el instanceof HTMLElement && el.isContentEditable) return;
+      e.preventDefault();
+      setShortcutsOpen((open) => !open);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   const {
@@ -131,6 +153,22 @@ export function TopToolbar(): JSX.Element {
         </button>
         <span className="toolbar-divider" />
         <button
+          className={`icon-button ${armedAlerts > 0 ? 'active' : ''}`}
+          onClick={() => setAlertsOpen(true)}
+          title="Price alerts and sounds"
+        >
+          <Bell size={16} />
+          {armedAlerts > 0 && <span className="icon-badge">{armedAlerts}</span>}
+        </button>
+        <button
+          className="icon-button"
+          onClick={() => setShortcutsOpen(true)}
+          title="Keyboard and mouse shortcuts (?)"
+        >
+          <Keyboard size={16} />
+        </button>
+        <span className="toolbar-divider" />
+        <button
           className="icon-button"
           onClick={() => chartController.current?.screenshot()}
           title="Save a PNG of the chart"
@@ -156,6 +194,8 @@ export function TopToolbar(): JSX.Element {
         </button>
       </div>
       {indicatorsOpen && <IndicatorsDialog onClose={() => setIndicatorsOpen(false)} />}
+      {alertsOpen && <AlertsDialog onClose={() => setAlertsOpen(false)} />}
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
     </header>
   );
 }

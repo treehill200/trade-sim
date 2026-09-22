@@ -326,6 +326,7 @@ export function createAccount(id: string, name: string, settings: AccountSetting
     executions: [],
     realisedPnlCents: 0,
     feesCents: 0,
+    notes: {},
     createdAt: now,
   };
 }
@@ -340,5 +341,6 @@ export function resetAccount(account: Account): Account {
     executions: [],
     realisedPnlCents: 0,
     feesCents: 0,
+    notes: {},
   };
 }

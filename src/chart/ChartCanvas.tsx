@@ -35,7 +35,8 @@ import type { Drawing, DrawingPoint } from '@/drawings/types';
 import { useDrawings } from '@/state/drawingsStore';
 import { chartMapping } from './chartMapping';
 import { drawExecutionMarkers, drawTradingLines } from './tradingLayer';
-import { chartLines } from '@/trading/chartLines';
+import { alertChartLines, chartLines } from '@/trading/chartLines';
+import { useAlerts } from '@/state/alertsStore';
 import { accountMetrics } from '@/trading/metrics';
 import { useTrading } from '@/state/tradingStore';
 import { currentQuote } from '@/ui/useQuote';
@@ -140,7 +141,7 @@ export function ChartCanvas(): JSX.Element {
    */
   const pendingTextRef = useRef<{ id: string; x: number; y: number } | null>(null);
   /** The order line being dragged to a new price, if any. */
-  const lineDragRef = useRef<{ orderId: string } | null>(null);
+  const lineDragRef = useRef<{ orderId?: string; alertId?: string } | null>(null);
 
   const theme = useUi((s) => s.theme);
   const timeframe = useUi((s) => s.timeframe);
@@ -336,7 +337,10 @@ export function ChartCanvas(): JSX.Element {
       const quote = currentQuote();
       if (quote.lastCents > 0) {
         const layer = {
-          lines: chartLines(account, accountMetrics(account, quote)),
+          lines: [
+            ...chartLines(account, accountMetrics(account, quote)),
+            ...alertChartLines(useAlerts.getState().alerts),
+          ],
           executions: account.executions,
           series,
           map: mapRef.current,
@@ -407,20 +411,27 @@ export function ChartCanvas(): JSX.Element {
    * Only orders are draggable: the position's entry and its liquidation price
    * are consequences of the position, not things the user can move.
    */
-  const orderLineAt = useCallback((x: number, y: number): string | null => {
-    const map = mapRef.current;
-    if (!map || x > timeScaleRef.current.width) return null;
-    const trading = useTrading.getState();
-    const account = trading.active();
-    const quote = currentQuote();
-    if (quote.lastCents <= 0) return null;
-    const lines = chartLines(account, accountMetrics(account, quote));
-    for (const line of lines) {
-      if (!line.draggable || !line.orderId) continue;
-      if (Math.abs(map.yOfPrice(line.priceCents) - y) <= 5) return line.orderId;
-    }
-    return null;
-  }, []);
+  const orderLineAt = useCallback(
+    (x: number, y: number): { orderId?: string; alertId?: string } | null => {
+      const map = mapRef.current;
+      if (!map || x > timeScaleRef.current.width) return null;
+      const account = useTrading.getState().active();
+      const quote = currentQuote();
+      if (quote.lastCents <= 0) return null;
+      const lines = [
+        ...chartLines(account, accountMetrics(account, quote)),
+        ...alertChartLines(useAlerts.getState().alerts),
+      ];
+      for (const line of lines) {
+        if (!line.draggable) continue;
+        if (Math.abs(map.yOfPrice(line.priceCents) - y) > 5) continue;
+        if (line.orderId) return { orderId: line.orderId };
+        if (line.alertId) return { alertId: line.alertId };
+      }
+      return null;
+    },
+    [],
+  );
 
   const cancelPlacement = useCallback(() => {
     placeRef.current = { kind: 'idle' };
@@ -543,9 +554,9 @@ export function ChartCanvas(): JSX.Element {
           return;
         }
 
-        const lineId = orderLineAt(x, y);
-        if (lineId) {
-          lineDragRef.current = { orderId: lineId };
+        const lineHit = orderLineAt(x, y);
+        if (lineHit) {
+          lineDragRef.current = lineHit;
           return;
         }
 
@@ -600,7 +611,10 @@ export function ChartCanvas(): JSX.Element {
         const map = mapRef.current;
         if (map) {
           const price = Math.round(map.priceOfY(y));
-          if (price > 0) useTrading.getState().moveOrder(lineDrag.orderId, price);
+          if (price > 0) {
+            if (lineDrag.orderId) useTrading.getState().moveOrder(lineDrag.orderId, price);
+            else if (lineDrag.alertId) useAlerts.getState().setPrice(lineDrag.alertId, price);
+          }
         }
         crosshairRef.current = { x, y, visible: true };
         return;
@@ -850,6 +864,19 @@ export function ChartCanvas(): JSX.Element {
       if ((e.key === 'Delete' || e.key === 'Backspace') && dw.selectedId) {
         e.preventDefault();
         dw.remove(dw.selectedId);
+        return;
+      }
+      if (e.altKey && e.key.toLowerCase() === 'a') {
+        // An alert at the crosshair, pointing the way the price would have to
+        // move to reach it.
+        e.preventDefault();
+        const map = mapRef.current;
+        const cross = crosshairRef.current;
+        if (!map || !cross.visible) return;
+        const price = Math.round(map.priceOfY(cross.y));
+        const last = marketClient.quote.last || marketClient.series.lastClose();
+        if (!Number.isFinite(price) || price <= 0) return;
+        useAlerts.getState().add(price, price >= last ? 'above' : 'below');
         return;
       }
       if (e.altKey && e.key.toLowerCase() === 'h') {

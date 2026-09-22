@@ -21,6 +21,19 @@ import {
   type Side,
 } from '@/trading/types';
 import { notify } from './notifications';
+import { playFillTone, speak, useAlerts } from './alertsStore';
+
+/**
+ * Announce a fill: a toast always, plus a tone and a spoken line if the user
+ * has asked for them. Kept in one place so every route to a fill — market,
+ * limit, stop, bracket or liquidation — sounds the same.
+ */
+function announceFill(title: string, body: string, buy: boolean, tone: 'success' | 'info' | 'warning' | 'error'): void {
+  notify({ tone, title, body });
+  const prefs = useAlerts.getState();
+  if (prefs.fillSound) playFillTone(buy);
+  if (prefs.announceFills) speak(title);
+}
 
 const LS_KEY = 'trading';
 /**
@@ -44,6 +57,11 @@ export interface TradingState {
   lastLiquidationAt: number;
 
   active: () => Account;
+  addAccount: (name: string) => void;
+  renameAccount: (id: string, name: string) => void;
+  deleteAccount: (id: string) => void;
+  selectAccount: (id: string) => void;
+  setNote: (tripId: string, note: string) => void;
   submit: (request: OrderRequest, quote: Quote) => void;
   submitMarket: (side: Side, qty: Qty, quote: Quote) => void;
   closePosition: (quote: Quote) => void;
@@ -108,6 +126,7 @@ function sanitise(raw: unknown, now: number): Persisted {
       executions: Array.isArray(a.executions) ? a.executions : [],
       realisedPnlCents: Number.isFinite(a.realisedPnlCents) ? (a.realisedPnlCents as number) : 0,
       feesCents: Number.isFinite(a.feesCents) ? (a.feesCents as number) : 0,
+      notes: typeof a.notes === 'object' && a.notes !== null ? a.notes : {},
       createdAt: Number.isFinite(a.createdAt) ? (a.createdAt as number) : now,
     });
   }
@@ -149,6 +168,48 @@ export const useTrading = create<TradingState>((set, get) => {
       return (s.accounts.find((a) => a.id === s.activeId) ?? s.accounts[0]) as Account;
     },
 
+    addAccount: (name) => {
+      const id = `acc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      // A new account starts from the current one's settings, which is almost
+      // always what someone wants when they add a second one.
+      const template = get().active().settings;
+      const account = createAccount(id, name.trim() || 'Account', { ...template }, Date.now());
+      set({ accounts: [...get().accounts, account], activeId: id });
+      persist();
+      notify({ tone: 'success', title: `Account "${account.name}" created` });
+    },
+
+    renameAccount: (id, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      set({ accounts: get().accounts.map((a) => (a.id === id ? { ...a, name: trimmed } : a)) });
+      persist();
+    },
+
+    deleteAccount: (id) => {
+      const remaining = get().accounts.filter((a) => a.id !== id);
+      // There is always at least one account to trade in.
+      if (remaining.length === 0) return;
+      const activeId = get().activeId === id ? (remaining[0] as Account).id : get().activeId;
+      set({ accounts: remaining, activeId });
+      persist();
+      notify({ tone: 'info', title: 'Account deleted' });
+    },
+
+    selectAccount: (id) => {
+      if (!get().accounts.some((a) => a.id === id)) return;
+      set({ activeId: id });
+      persist();
+    },
+
+    setNote: (tripId, note) => {
+      const account = get().active();
+      const notes = { ...account.notes };
+      if (note.trim()) notes[tripId] = note;
+      else delete notes[tripId];
+      replace({ ...account, notes });
+    },
+
     submit: (request, quote) => {
       const account = get().active();
       const result = submitOrderIn(account, request, quote);
@@ -169,11 +230,12 @@ export const useTrading = create<TradingState>((set, get) => {
         return;
       }
       const price = result.order.fillPriceCents ?? quote.lastCents;
-      notify({
-        tone: request.side === 'buy' ? 'success' : 'info',
-        title: `${request.side === 'buy' ? 'Bought' : 'Sold'} ${qtyToUnits(result.order.qty)} DAVID`,
-        body: `at $${formatUsd(price)}`,
-      });
+      announceFill(
+        `Order filled: ${request.side === 'buy' ? 'bought' : 'sold'} ${qtyToUnits(result.order.qty)} DAVID`,
+        `at $${formatUsd(price)}`,
+        request.side === 'buy',
+        request.side === 'buy' ? 'success' : 'info',
+      );
     },
 
     submitMarket: (side, qty, quote) => {
@@ -270,12 +332,17 @@ export const useTrading = create<TradingState>((set, get) => {
           for (const execution of worked.executions) {
             const order = worked.account.orders.find((o) => o.id === execution.orderId);
             const label =
-              order?.tag === 'tp' ? 'Take-profit filled' : order?.tag === 'sl' ? 'Stop-loss filled' : 'Order filled';
-            notify({
-              tone: execution.realisedCents >= 0 ? 'success' : 'warning',
-              title: label,
-              body: `${qtyToUnits(execution.qty)} DAVID at $${formatUsd(execution.priceCents)}`,
-            });
+              order?.tag === 'tp'
+                ? 'Take-profit filled'
+                : order?.tag === 'sl'
+                  ? 'Stop-loss filled'
+                  : 'Order filled';
+            announceFill(
+              label,
+              `${qtyToUnits(execution.qty)} DAVID at $${formatUsd(execution.priceCents)}`,
+              execution.side === 'buy',
+              execution.realisedCents >= 0 ? 'success' : 'warning',
+            );
           }
         }
       }

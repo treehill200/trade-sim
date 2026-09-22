@@ -6,10 +6,6 @@ single-page web app with an interface modelled on a professional charting termin
 Everything is simulated: the prices, the order book, the fills and the account. There is no real
 market data, no real money, and no server. It all runs in your browser.
 
-> **Build status:** Phases 1-6 of 7 are complete. The last phase adds the trade journal and
-> statistics, price alerts, multiple accounts and the final polish. See `DECISIONS.md` for the
-> running log of technical choices.
-
 ## Running it
 
 You need [Node.js](https://nodejs.org) 18 or newer. Then, in this folder:
@@ -35,7 +31,7 @@ later visit opens almost instantly.
 | `npm run build` | Produce an optimised build in `dist/` |
 | `npm run typecheck` | Check types without building |
 
-## What you can do right now
+## The chart
 
 - **Watch the market move.** One 1-minute candle takes one real minute, and the price updates four
   times a second, so the newest candle is always alive.
@@ -64,6 +60,7 @@ later visit opens almost instantly.
   colour, width, dash, clone, lock and delete, and press Delete to remove it.
 - **Save a PNG of the chart** with the camera button.
 - **Change your time zone** from the dropdown in the bottom-right corner.
+- **See every shortcut** by pressing `?`, or with the keyboard button in the top-right corner.
 
 ## Trading
 
@@ -91,11 +88,81 @@ The panel on the right places orders; the panel along the bottom tracks the acco
   equity falls below the maintenance requirement the position is closed automatically with a notice
   telling you what happened.
 - **The bottom panel** shows balance, equity, realised and unrealised P&L, available funds, orders
-  margin, margin buffer and fees paid, with tabs for Positions, Working Orders and Order History.
-  Drag its top edge to resize it, or collapse it with the chevron.
+  margin, margin buffer and fees paid, with tabs for Positions, Working Orders, Order History, the
+  Trade Journal and Stats. Drag its top edge to resize it, or collapse it with the chevron.
 
 Everything is simulated and nothing leaves your browser. There is no real money involved at any
 point.
+
+## The trade journal and your stats
+
+Open the **Trade Journal** tab in the bottom panel. Every completed round trip — from the moment you
+opened a position to the moment it went flat again — gets a row with when it started, the side, the
+size, the average entry and exit prices, gross P&L, fees, net P&L and how long you held it. Click
+the note column to write down why you took the trade; the note is saved with it.
+
+The **Stats** tab turns those trips into the numbers worth watching: trades taken, win rate, wins
+and losses, average and largest win and loss, profit factor, expectancy, max drawdown, best and
+worst streaks, total fees and the net result. Beside them is your **equity curve**, drawn trade by
+trade against your starting balance — above the dashed line is profit, below it is loss.
+
+A trip is worked out from your fills, so the journal and the stats can never disagree with your
+order history. Reversing straight from long to short closes one trade and opens the next, exactly as
+you would count it yourself.
+
+## Price alerts
+
+Click the **bell** in the top-right corner. Type a price and press "Add alert" — an alert above the
+current price fires on the way up, and one below it fires on the way down. The bell shows how many
+alerts are armed.
+
+Faster still: hover the chart where you want it and press `Alt`+`A`. The alert appears as a dashed
+orange line with a tag on the price axis, and you can **drag the line** to move it.
+
+When the price reaches it you get a notice in the corner, a chime, and the alert stays in the list
+marked as fired — with a button to arm it again. Alerts are checked against everything the price did
+between updates, so a violent move cannot slip past one.
+
+### Sound
+
+In the same dialog:
+
+- **Chime when an alert fires** — a two-note chime.
+- **Tone when an order fills** — one short note, rising for a buy and falling for a sell.
+- **Say "order filled" out loud** — your browser reads out every fill, including take-profits, stop
+  losses and liquidations. Off by default.
+
+Each has a Test button next to it. Browsers stay silent until you have clicked something on the page,
+so if you hear nothing at first, click anywhere and try again.
+
+## Multiple accounts
+
+Click the account name at the right-hand end of the bottom panel's summary row — it says "Main" to
+begin with — to open the account list. Every account shows its live equity. From there you can
+**switch** between them, **rename** one with the pencil, **delete** one with the bin (twice, and
+never the last one), or start a **New account** that inherits your current settings.
+
+Each account keeps its own balance, position, orders, order history, journal, notes and settings, so
+you can run a careful account and a reckless one side by side against the same market.
+
+## Every shortcut
+
+Press `?` at any time for the full list. In short:
+
+| Shortcut | Does |
+| --- | --- |
+| Drag / wheel / pinch | Pan and zoom |
+| Drag either axis | Stretch that scale |
+| Double-click | Reset the view |
+| `Esc` | Cancel the drawing in progress, or drop back to the cursor |
+| `Delete` | Remove the selected drawing |
+| `Alt`+`H` | Horizontal line at the crosshair |
+| `Alt`+`A` | Price alert at the crosshair |
+| `Cmd`/`Ctrl`+`Z` | Undo |
+| `Cmd`/`Ctrl`+`Shift`+`Z` | Redo |
+| Click a DOM level | Limit order there |
+| Shift-click a DOM level | Stop order there |
+| `?` | This list |
 
 ## Drawing tools
 
@@ -106,14 +173,6 @@ remove all.
 
 Drawings are anchored to a time and a price, so they stay exactly where you put them across any
 amount of panning, zooming and timeframe switching — and they come back after a reload.
-
-| Shortcut | Does |
-| --- | --- |
-| `Esc` | Cancel the drawing in progress, or drop back to the cursor |
-| `Delete` | Remove the selected drawing |
-| `Alt`+`H` | Drop a horizontal line at the crosshair |
-| `Cmd`/`Ctrl`+`Z` | Undo |
-| `Cmd`/`Ctrl`+`Shift`+`Z` | Redo |
 
 ## Indicators
 
@@ -156,9 +215,23 @@ src/
   trading/     exact money arithmetic, the order engine and account metrics
   state/       Zustand UI store and the main-thread client for the market worker
   storage/     IndexedDB and localStorage helpers
-  ui/          React components for the toolbars, legends and dialogs
-tests/         Vitest suites for the market, chart maths, indicators, drawings and trading
+  ui/          React components for the toolbars, legends, panels and dialogs
+tests/         Vitest suites for the market, chart maths, indicators, drawings, trading,
+               orders, the journal and alerts
 ```
+
+## What is saved
+
+Nothing needs saving by hand. The moment you change something it is written to your browser:
+
+- **In IndexedDB:** the David Coin price history and the simulator's own state, so the market picks
+  up exactly where it left off.
+- **In localStorage:** your timeframe, chart type, theme, time zone, axis settings, indicators and
+  their pane heights, every drawing, your accounts with their balances, positions, orders, history
+  and journal notes, your alerts, and the sound switches.
+
+Close the tab for an hour and come back: the chart fills in the candles that "happened" while you
+were away, and everything else is where you left it.
 
 ## Starting over
 
