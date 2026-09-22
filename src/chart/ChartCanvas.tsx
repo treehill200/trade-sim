@@ -17,6 +17,24 @@ import {
 import { indicatorDef } from '@/indicators/defs';
 import { indicatorEngine } from '@/indicators/engine';
 import { TF_SECONDS } from '@/engine/timeframes';
+import { DrawingMap, magnetPrice } from '@/drawings/mapping';
+import { resolveShape, hitTestShape, type Bounds } from '@/drawings/geometry';
+import { drawDrawings } from '@/drawings/render';
+import {
+  dragPoints,
+  isMeaningful,
+  isSingleClick,
+  makeDrawing,
+  moveHandle,
+  offsetPoints,
+  startPoints,
+  translate,
+  type Placement,
+} from '@/drawings/placement';
+import type { Drawing, DrawingPoint } from '@/drawings/types';
+import { useDrawings } from '@/state/drawingsStore';
+import { DrawingContextMenu } from '@/ui/DrawingContextMenu';
+import { TextLabelEditor } from '@/ui/TextLabelEditor';
 import { ChartLegend } from '@/ui/ChartLegend';
 import { PaneLegends, type PaneLegendRow } from '@/ui/PaneLegends';
 import { QuickTrade } from '@/ui/QuickTrade';
@@ -97,6 +115,23 @@ export function ChartCanvas(): JSX.Element {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [paneRects, setPaneRects] = useState<PaneRect[]>([]);
   const [cursorOverride, setCursorOverride] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [textEdit, setTextEdit] = useState<{ x: number; y: number; id: string } | null>(null);
+
+  /** Rebuilt every frame so the pointer handlers share the renderer's mapping. */
+  const mapRef = useRef<DrawingMap | null>(null);
+  const boundsRef = useRef<Bounds>({ width: 0, top: 0, height: 0 });
+  const placeRef = useRef<Placement>({ kind: 'idle' });
+  const drawDragRef = useRef<{ id: string; handle: number; from: DrawingPoint } | null>(null);
+  /**
+   * A text label waiting for its editor.
+   *
+   * The editor cannot be opened during pointerdown: the browser's own handling
+   * of that event moves focus away from whatever was just mounted, which
+   * blurred the input and discarded the label before it could be typed into.
+   * Opening it on pointerup sidesteps that entirely.
+   */
+  const pendingTextRef = useRef<{ id: string; x: number; y: number } | null>(null);
 
   const theme = useUi((s) => s.theme);
   const timeframe = useUi((s) => s.timeframe);
@@ -107,6 +142,9 @@ export function ChartCanvas(): JSX.Element {
   const cursorMode = useUi((s) => s.cursorMode);
   const chartType = useUi((s) => s.chartType);
   const indicators = useUi((s) => s.indicators);
+  // The render loop and the pointer handlers read the drawings store directly;
+  // only the cursor shape needs the component to re-render when it changes.
+  const drawingTool = useDrawings((s) => s.tool);
 
   /** Indicators that get their own pane, in order; the rest overlay the price. */
   const paneIndicators = useMemo(
@@ -237,6 +275,10 @@ export function ChartCanvas(): JSX.Element {
       const plotClose = plot.length > 0 ? (plot.close[plot.length - 1] as number) : Number.NaN;
       smoothCloseRef.current = ease(smoothCloseRef.current, plotClose);
 
+      const tfMs = TF_SECONDS[timeframe] * 1000;
+      mapRef.current = new DrawingMap(series, tfMs, ts, mainScale);
+      boundsRef.current = { width: ts.width, top: mainScale.top, height: mainScale.height };
+
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -259,6 +301,21 @@ export function ChartCanvas(): JSX.Element {
         now: Date.now(),
         dpr,
       });
+
+      const place = placeRef.current;
+      const dw = useDrawings.getState();
+      drawDrawings(ctx, {
+        drawings: dw.drawings,
+        // The in-progress drawing is rendered from the same code path as a
+        // committed one, so what you see while dragging is what you get.
+        preview: place.kind === 'idle' ? null : makeDrawing(place.tool, place.points, dw.style),
+        map: mapRef.current,
+        bounds: boundsRef.current,
+        theme: themeByName(theme),
+        dpr,
+        selectedId: dw.selectedId,
+        hidden: dw.hidden,
+      });
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
@@ -278,6 +335,59 @@ export function ChartCanvas(): JSX.Element {
   ]);
 
   // --- interaction -------------------------------------------------------
+
+  // --- drawings ----------------------------------------------------------
+
+  /** Pointer position as a timestamp and price, snapped if magnet is on. */
+  const dataPointAt = useCallback((x: number, y: number): DrawingPoint | null => {
+    const map = mapRef.current;
+    if (!map) return null;
+    const time = map.snapTime(map.timeOfX(x));
+    const raw = map.priceOfY(y);
+    const dw = useDrawings.getState();
+    const price = dw.magnet ? magnetPrice(marketClient.series, map, time, raw) : raw;
+    return { time, price };
+  }, []);
+
+  /** Topmost drawing under the pointer, and which of its handles was grabbed. */
+  const drawingAt = useCallback(
+    (x: number, y: number): { drawing: Drawing; handle: number } | null => {
+      const map = mapRef.current;
+      if (!map) return null;
+      const dw = useDrawings.getState();
+      if (dw.hidden || dw.locked) return null;
+      // Last drawn is on top, so search backwards.
+      for (let i = dw.drawings.length - 1; i >= 0; i--) {
+        const d = dw.drawings[i] as Drawing;
+        if (!d.visible || d.locked) continue;
+        const hit = hitTestShape(resolveShape(d, map, boundsRef.current), x, y);
+        if (hit) return { drawing: d, handle: hit.handle };
+      }
+      return null;
+    },
+    [],
+  );
+
+  const cancelPlacement = useCallback(() => {
+    placeRef.current = { kind: 'idle' };
+  }, []);
+
+  /** Finish the drawing being placed; returns the committed drawing, if any. */
+  const commitPlacement = useCallback((): Drawing | null => {
+    const place = placeRef.current;
+    if (place.kind === 'idle') return null;
+    placeRef.current = { kind: 'idle' };
+    const dw = useDrawings.getState();
+    const map = mapRef.current;
+    // One bar of movement is the smallest gesture we treat as deliberate.
+    const minSpan = map ? Math.abs(map.timeOfIndex(1) - map.timeOfIndex(0)) : 0;
+    if (!isMeaningful(place.tool, place.points, minSpan)) return null;
+    const drawing = makeDrawing(place.tool, place.points, dw.style, place.tool === 'text' ? '' : undefined);
+    dw.add(drawing);
+    dw.setTool('cursor');
+    return drawing;
+  }, []);
+
 
   const syncFollow = useCallback(() => {
     const ts = timeScaleRef.current;
@@ -348,10 +458,51 @@ export function ChartCanvas(): JSX.Element {
         return;
       }
       e.currentTarget.setPointerCapture(e.pointerId);
+
+      const inPlot = x <= timeScaleRef.current.width && boundsRef.current.height > 0;
+      const insidePricePane =
+        inPlot && y >= boundsRef.current.top && y <= boundsRef.current.top + boundsRef.current.height;
+
+      if (insidePricePane && e.button === 0) {
+        const dw = useDrawings.getState();
+        const place = placeRef.current;
+
+        // Second stage of the parallel channel: this click fixes the offset.
+        if (place.kind === 'awaitingOffset') {
+          commitPlacement();
+          return;
+        }
+
+        if (dw.tool !== 'cursor') {
+          const at = dataPointAt(x, y);
+          if (!at) return;
+          const points = startPoints(dw.tool, at);
+          if (isSingleClick(dw.tool)) {
+            placeRef.current = { kind: 'dragging', tool: dw.tool, points };
+            const created = commitPlacement();
+            // A text label is useless until it says something, so ask as soon
+            // as the click finishes.
+            if (created && created.tool === 'text') pendingTextRef.current = { id: created.id, x, y };
+            return;
+          }
+          placeRef.current = { kind: 'dragging', tool: dw.tool, points };
+          return;
+        }
+
+        const hitDrawing = drawingAt(x, y);
+        if (hitDrawing) {
+          dw.select(hitDrawing.drawing.id);
+          const at = dataPointAt(x, y);
+          if (at) drawDragRef.current = { id: hitDrawing.drawing.id, handle: hitDrawing.handle, from: at };
+          return;
+        }
+        if (dw.selectedId) dw.select(null);
+      }
+
       const hit = hitTest(x, y);
       dragRef.current = { mode: hit.mode, x, y, paneId: hit.paneId, index: hit.index };
     },
-    [hitTest],
+    [hitTest, dataPointAt, drawingAt, commitPlacement],
   );
 
   const onPointerMove = useCallback(
@@ -373,6 +524,32 @@ export function ChartCanvas(): JSX.Element {
         return;
       }
 
+      const place = placeRef.current;
+      if (place.kind !== 'idle') {
+        const at = dataPointAt(x, y);
+        if (at) {
+          placeRef.current =
+            place.kind === 'awaitingOffset'
+              ? { kind: 'awaitingOffset', tool: 'channel', points: offsetPoints(place.points, at) }
+              : { kind: 'dragging', tool: place.tool, points: dragPoints(place.tool, place.points, at) };
+        }
+      }
+
+      const drawDrag = drawDragRef.current;
+      if (drawDrag) {
+        const at = dataPointAt(x, y);
+        const dw = useDrawings.getState();
+        const drawing = dw.drawings.find((d) => d.id === drawDrag.id);
+        if (at && drawing) {
+          const next =
+            drawDrag.handle < 0
+              ? translate(drawing.points, at.time - drawDrag.from.time, at.price - drawDrag.from.price)
+              : moveHandle(drawing.tool, drawing.points, drawDrag.handle, at);
+          if (drawDrag.handle < 0) drawDragRef.current = { ...drawDrag, from: at };
+          dw.moveLive(drawDrag.id, next);
+        }
+      }
+
       crosshairRef.current = { x, y, visible: x <= ts.width && y <= plotBottomRef.current };
       const idx = Math.round(ts.indexOfX(x));
       setHoverIndex(
@@ -381,8 +558,19 @@ export function ChartCanvas(): JSX.Element {
           : null,
       );
 
+      if (placeRef.current.kind !== 'idle' || drawDragRef.current) return;
+
       const drag = dragRef.current;
       if (drag.mode === 'none') {
+        const dw = useDrawings.getState();
+        if (dw.tool !== 'cursor') {
+          setCursorOverride((prev) => (prev === 'crosshair' ? prev : 'crosshair'));
+          return;
+        }
+        if (drawingAt(x, y)) {
+          setCursorOverride((prev) => (prev === 'move' ? prev : 'move'));
+          return;
+        }
         const hit = hitTest(x, y);
         const next =
           hit.mode === 'paneResize' ? 'row-resize' : hit.mode === 'valueScale' ? 'ns-resize' : null;
@@ -423,16 +611,34 @@ export function ChartCanvas(): JSX.Element {
     [zoom, syncFollow, hitTest, paneIds],
   );
 
-  const endDrag = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    pointersRef.current.delete(e.pointerId);
-    if (pointersRef.current.size < 2) pinchRef.current = null;
-    dragRef.current.mode = 'none';
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      /* pointer already released */
-    }
-  }, []);
+  const endDrag = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const place = placeRef.current;
+      if (place.kind === 'dragging') {
+        // A channel needs one more click to set how far the parallel sits.
+        if (place.tool === 'channel') placeRef.current = { kind: 'awaitingOffset', tool: 'channel', points: place.points };
+        else commitPlacement();
+      }
+      if (drawDragRef.current) {
+        useDrawings.getState().commit();
+        drawDragRef.current = null;
+      }
+      const pendingText = pendingTextRef.current;
+      if (pendingText) {
+        pendingTextRef.current = null;
+        setTextEdit(pendingText);
+      }
+      pointersRef.current.delete(e.pointerId);
+      if (pointersRef.current.size < 2) pinchRef.current = null;
+      dragRef.current.mode = 'none';
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* pointer already released */
+      }
+    },
+    [commitPlacement],
+  );
 
   const onPointerLeave = useCallback(() => {
     crosshairRef.current = { ...crosshairRef.current, visible: false };
@@ -527,6 +733,67 @@ export function ChartCanvas(): JSX.Element {
     };
   }, [setDateRange, resetView, goRealtime, screenshot]);
 
+  const onContextMenu = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const hit = drawingAt(x, y);
+      if (!hit) return;
+      e.preventDefault();
+      useDrawings.getState().select(hit.drawing.id);
+      setContextMenu({ x, y, id: hit.drawing.id });
+    },
+    [drawingAt],
+  );
+
+  /** Keyboard shortcuts for the drawing layer. */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      // Never steal keys from a field the user is typing in.
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return;
+      }
+      const dw = useDrawings.getState();
+      const meta = e.metaKey || e.ctrlKey;
+
+      if (meta && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) dw.redo();
+        else dw.undo();
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (placeRef.current.kind !== 'idle') cancelPlacement();
+        else if (dw.tool !== 'cursor') dw.setTool('cursor');
+        else dw.select(null);
+        setContextMenu(null);
+        return;
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && dw.selectedId) {
+        e.preventDefault();
+        dw.remove(dw.selectedId);
+        return;
+      }
+      if (e.altKey && e.key.toLowerCase() === 'h') {
+        // Drop a horizontal line at the crosshair, or at the last price.
+        e.preventDefault();
+        const map = mapRef.current;
+        if (!map) return;
+        const cross = crosshairRef.current;
+        const price = cross.visible
+          ? map.priceOfY(cross.y)
+          : marketClient.quote.last || marketClient.series.lastClose();
+        const time = cross.visible ? map.snapTime(map.timeOfX(cross.x)) : Date.now();
+        if (!Number.isFinite(price)) return;
+        dw.add(makeDrawing('hline', [{ time, price }], dw.style));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [cancelPlacement]);
+
   const legendRows: PaneLegendRow[] = useMemo(
     () =>
       paneRects
@@ -537,7 +804,14 @@ export function ChartCanvas(): JSX.Element {
   );
 
   const cursorCss =
-    cursorOverride ?? (cursorMode === 'arrow' ? 'default' : cursorMode === 'dot' ? 'cell' : 'crosshair');
+    cursorOverride ??
+    (drawingTool !== 'cursor'
+      ? 'crosshair'
+      : cursorMode === 'arrow'
+        ? 'default'
+        : cursorMode === 'dot'
+          ? 'cell'
+          : 'crosshair');
 
   return (
     <div className="chart-container" ref={containerRef}>
@@ -551,6 +825,7 @@ export function ChartCanvas(): JSX.Element {
         onPointerCancel={endDrag}
         onPointerLeave={onPointerLeave}
         onDoubleClick={onDoubleClick}
+        onContextMenu={onContextMenu}
       />
       <div className="chart-overlay-left">
         <ChartLegend hoverIndex={hoverIndex} overlays={overlayIndicators} />
@@ -558,6 +833,10 @@ export function ChartCanvas(): JSX.Element {
       </div>
       <PaneLegends rows={legendRows} hoverIndex={hoverIndex} />
       {!atRealtime && <ScrollToRealtime onClick={goRealtime} />}
+      {contextMenu && (
+        <DrawingContextMenu {...contextMenu} onClose={() => setContextMenu(null)} />
+      )}
+      {textEdit && <TextLabelEditor {...textEdit} onClose={() => setTextEdit(null)} />}
     </div>
   );
 }

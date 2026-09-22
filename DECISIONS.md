@@ -185,3 +185,45 @@ each measured:
 The result: five indicators across four panes render at 16.7ms (60fps) at normal zoom and 36ms with
 the entire 30-day 1-minute history on screen — and that is with software rasterisation in a
 container, which is the slow case.
+
+## Phase 4 — drawing tools
+
+### Anchoring
+- **A drawing is a list of (time, price) points.** Nothing about it is stored in pixels, which is
+  what makes a trend line sit across exactly the same candles when you switch from 5m to 1h, and
+  what lets it be saved and restored without knowing anything about the viewport it was drawn in.
+- **`DrawingMap` is the single place that converts between data and screen space.** Because the
+  market is continuous, a timestamp maps to a bar index by plain arithmetic — including for times
+  beyond the newest candle, which is what lets a ray extend into the empty space on the right.
+- **Magnet mode snaps to the nearest of the candle's four prices**, and leaves the price untouched
+  outside the series so you can still draw in that empty space.
+
+### One geometry, two consumers
+- **`resolveShape` turns a drawing into segments, areas, polygons and handles**, and both the
+  renderer and the hit test work from it. Anything you can see is exactly what you can click, and
+  the two can never drift apart as tools are added.
+- **Handles win over the body in a hit test**, so grabbing an endpoint resizes instead of moving the
+  whole shape — and a filled rectangle or channel can be grabbed from anywhere inside it.
+- **The in-progress drawing renders through the same path as a committed one**, so the rubber band
+  while you drag is literally the thing you are about to get.
+
+### Interaction
+- **The parallel channel is the only two-stage tool**: a drag fixes the base line, then the pointer
+  sets how far the parallel sits from it and a click commits. Everything else completes in one
+  gesture, and the position tools derive a sensible stop from the entry and target so a single drag
+  produces a complete position.
+- **The tool reverts to the cursor after each drawing**, which is the default everywhere and avoids
+  a stray second shape from an accidental click.
+- **A whole drag is one undo step.** `moveLive` mutates without touching history and `commit`
+  records the pre-drag state once, so undo jumps back to before the drag rather than unwinding it
+  one mouse-move at a time.
+- **Undo history lives outside the store**, because it is neither persisted nor rendered — keeping
+  it out means it cannot accidentally be serialised into a saved layout.
+- **The text editor opens on pointer *up*, not pointer down.** This was a real bug: the browser's
+  own handling of mousedown moves focus away from anything mounted during that event, which blurred
+  the new input and discarded the label before it could be typed into. The input also ignores blur
+  until it has genuinely been focused once.
+- **An empty label is discarded**, so clicking with the text tool and changing your mind does not
+  leave an invisible drawing behind.
+- **Saved drawings are sanitised on load** for the same reason indicators are: a malformed one from
+  an older version would otherwise throw while rendering and take the whole chart with it.

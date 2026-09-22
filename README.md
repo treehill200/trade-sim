@@ -6,9 +6,9 @@ single-page web app with an interface modelled on a professional charting termin
 Everything is simulated: the prices, the order book, the fills and the account. There is no real
 market data, no real money, and no server. It all runs in your browser.
 
-> **Build status:** Phases 1-3 of 7 are complete — the market engine, the chart and the indicators.
-> The trading side (orders, positions, PnL) arrives in later phases. See `DECISIONS.md` for the
-> running log of technical choices.
+> **Build status:** Phases 1-4 of 7 are complete — the market engine, the chart, the indicators and
+> the drawing tools. The trading side (orders, positions, PnL) arrives in later phases. See
+> `DECISIONS.md` for the running log of technical choices.
 
 ## Running it
 
@@ -57,8 +57,31 @@ later visit opens almost instantly.
 - **Tune any indicator** from its legend line — the eye hides it, the gear opens its settings
   (lengths, colours, line widths) and the X removes it.
 - **Resize a pane** by dragging the gap between it and its neighbour.
+- **Draw on the chart** from the toolbar down the left edge: trend lines, rays, horizontal and
+  vertical lines, parallel channels, rectangles, Fibonacci retracements, long and short position
+  tools, price and date range measures, text labels, arrows and a freehand brush.
+- **Edit a drawing** by clicking it: drag it to move, drag a handle to reshape, right-click for
+  colour, width, dash, clone, lock and delete, and press Delete to remove it.
 - **Save a PNG of the chart** with the camera button.
 - **Change your time zone** from the dropdown in the bottom-right corner.
+
+## Drawing tools
+
+The left-hand toolbar groups the tools the way a charting terminal does — click a group to use its
+current tool, or click again to pick a different one from the flyout. Underneath are magnet mode
+(snap new points to the nearest open, high, low or close), lock all, hide all, undo, redo and
+remove all.
+
+Drawings are anchored to a time and a price, so they stay exactly where you put them across any
+amount of panning, zooming and timeframe switching — and they come back after a reload.
+
+| Shortcut | Does |
+| --- | --- |
+| `Esc` | Cancel the drawing in progress, or drop back to the cursor |
+| `Delete` | Remove the selected drawing |
+| `Alt`+`H` | Drop a horizontal line at the crosshair |
+| `Cmd`/`Ctrl`+`Z` | Undo |
+| `Cmd`/`Ctrl`+`Shift`+`Z` | Redo |
 
 ## Indicators
 
@@ -97,10 +120,11 @@ src/
   workers/     the Web Worker the market runs in, and its message protocol
   chart/       the canvas charting engine: scales, panes, renderer, chart types
   indicators/  indicator maths, the catalogue, and the result cache
+  drawings/    drawing model, coordinate mapping, geometry and rendering
   state/       Zustand UI store and the main-thread client for the market worker
   storage/     IndexedDB and localStorage helpers
   ui/          React components for the toolbars, legends and dialogs
-tests/         Vitest suites for the engine, aggregation, chart maths and indicators
+tests/         Vitest suites for the engine, aggregation, chart maths, indicators and drawings
 ```
 
 ## Starting over

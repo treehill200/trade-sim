@@ -75,10 +75,16 @@ body {
 }
 
 .workspace {
-  position: relative;
+  display: flex;
   min-height: 0;
   border-top: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
+}
+
+.chart-area {
+  position: relative;
+  flex: 1;
+  min-width: 0;
 }
 
 /* ------------------------------------------------------------ toolbar */
@@ -932,4 +938,179 @@ body {
 
 .primary-button:hover {
   filter: brightness(1.08);
+}
+
+/* ------------------------------------------------------ drawing rail */
+
+.drawing-rail {
+  flex: none;
+  width: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow: visible;
+}
+
+.rail-divider {
+  width: 22px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-soft);
+}
+
+.rail-group {
+  position: relative;
+}
+
+.rail-button {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rail-button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.rail-button.active {
+  background: var(--active);
+  color: var(--accent);
+}
+
+.rail-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.rail-button.danger:hover:not(:disabled) {
+  color: var(--down);
+}
+
+/* A small notch in the corner marks a button that opens a flyout. */
+.rail-caret {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-bottom: 4px solid currentColor;
+  opacity: 0.55;
+}
+
+.rail-flyout {
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 0;
+  z-index: 45;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.rail-confirm {
+  padding: 7px 9px 4px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.menu-item.danger {
+  color: var(--down);
+}
+
+.menu-item.danger:hover {
+  background: color-mix(in srgb, var(--down) 14%, transparent);
+}
+
+/* ------------------------------------------------ drawing style menu */
+
+.draw-menu {
+  position: absolute;
+  z-index: 55;
+  min-width: 210px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
+}
+
+.draw-menu-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+}
+
+.draw-menu-sep {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--border-soft);
+}
+
+.swatch {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.swatch.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.chip {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  color: var(--text);
+}
+
+.chip.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.text-editor {
+  position: absolute;
+  z-index: 55;
+}
+
+.text-editor input {
+  width: 180px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
 }

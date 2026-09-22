@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { ChartCanvas } from '@/chart/ChartCanvas';
+import { DrawingToolbar } from '@/ui/DrawingToolbar';
 import { TopToolbar } from '@/ui/TopToolbar';
 import { BottomBar } from '@/ui/BottomBar';
 import { LoadingOverlay } from '@/ui/LoadingOverlay';
@@ -45,7 +46,10 @@ export function App(): JSX.Element {
       <div className="app">
         <TopToolbar />
         <main className="workspace">
-          <ChartCanvas />
+          <DrawingToolbar />
+          <div className="chart-area">
+            <ChartCanvas />
+          </div>
         </main>
         <BottomBar />
         <LoadingOverlay status={status} />
