@@ -1,6 +1,7 @@
 import {
   applyFill,
   fillPrice,
+  previewMarketOrder,
   requiredMargin,
   sideSign,
   submitMarketOrder,
@@ -49,6 +50,94 @@ export interface SubmitOrderResult {
  * working order. Bracket prices ride along on the order and are turned into
  * real exit orders the moment it fills.
  */
+/** Whether a limit order crosses the spread, and so takes liquidity at once. */
+function isMarketable(request: OrderRequest, quote: Quote): boolean {
+  return (
+    request.type === 'limit' &&
+    isPrice(request.limitCents) &&
+    (request.side === 'buy'
+      ? request.limitCents >= quote.askCents
+      : request.limitCents <= quote.bidCents)
+  );
+}
+
+export interface OrderPreview {
+  /** Commission the order would pay when it fills. */
+  feeCents: Cents;
+  /** Margin the resulting position would have to be backed by. */
+  requiredCents: Cents;
+  /** Whether it takes liquidity now — and so pays the taker rate now. */
+  immediate: boolean;
+  /** Whether the order would be accepted. */
+  affordable: boolean;
+  /** How much more equity it would take to cover it; 0 when it is affordable. */
+  shortfallCents: Cents;
+  /** Why not, when it would not. */
+  reason?: string;
+}
+
+/**
+ * Answer "would this be accepted, and what would it cost?" without submitting.
+ *
+ * The order panel has to show that before the user commits, and an answer it
+ * works out for itself would drift from the rules the moment either side
+ * changed — so the panel and the submit path below both ask this one function.
+ */
+export function previewOrder(
+  account: Account,
+  request: OrderRequest,
+  quote: Quote,
+): OrderPreview {
+  const qty = Math.abs(request.qty);
+  if (qty <= 0) {
+    return {
+      feeCents: 0,
+      requiredCents: 0,
+      immediate: false,
+      affordable: false,
+      shortfallCents: 0,
+      reason: 'Quantity must be greater than zero',
+    };
+  }
+
+  const immediate = request.type === 'market' || isMarketable(request, quote);
+  if (request.type === 'market') {
+    const preview = previewMarketOrder(account, request.side, qty, quote);
+    return {
+      feeCents: preview.feeCents,
+      requiredCents: preview.requiredCents,
+      immediate,
+      affordable: preview.affordable,
+      shortfallCents: preview.shortfallCents,
+      ...(preview.affordable ? {} : { reason: 'Not enough margin' }),
+    };
+  }
+
+  // A resting order is margin-checked against what it would open if it filled
+  // right now. Its commission is charged on the fill, not on the order, so it
+  // is shown but not held against the account here.
+  const reference = request.limitCents ?? request.stopCents ?? quote.lastCents;
+  const hypothetical = applyFill(account.position, request.side, qty, reference, quote.timeMs);
+  const requiredCents = requiredMargin(hypothetical.position, reference, account.settings);
+  const equity = account.balanceCents + unrealisedPnl(account.position, quote.lastCents);
+  const grows = Math.abs(hypothetical.position.qty) > Math.abs(account.position.qty);
+  const feeCents = applyPpm(
+    Math.abs(notional(reference, qty)),
+    immediate ? account.settings.takerFeePpm : account.settings.makerFeePpm,
+  );
+  const blocked = !request.reduceOnly && grows;
+  const shortfallCents = blocked ? Math.max(0, requiredCents - equity) : 0;
+  const affordable = shortfallCents === 0;
+  return {
+    feeCents,
+    requiredCents,
+    immediate,
+    affordable,
+    shortfallCents,
+    ...(affordable ? {} : { reason: 'Not enough margin' }),
+  };
+}
+
 export function submitOrder(
   account: Account,
   request: OrderRequest,
@@ -93,23 +182,12 @@ export function submitOrder(
 
   // Margin is checked against what the order would open if it filled right
   // now; reduce-only orders free margin instead of using it.
-  if (!request.reduceOnly) {
-    const reference = request.limitCents ?? request.stopCents ?? quote.lastCents;
-    const hypothetical = applyFill(account.position, request.side, qty, reference, quote.timeMs);
-    const needed = requiredMargin(hypothetical.position, reference, account.settings);
-    const equity = account.balanceCents + unrealisedPnl(account.position, quote.lastCents);
-    const grows = Math.abs(hypothetical.position.qty) > Math.abs(account.position.qty);
-    if (grows && equity < needed) {
-      return reject(account, request, 'Not enough margin', quote.timeMs);
-    }
+  const preview = previewOrder(account, request, quote);
+  if (!preview.affordable) {
+    return reject(account, request, preview.reason ?? 'Not enough margin', quote.timeMs);
   }
 
-  const marketableLimit =
-    request.type === 'limit' &&
-    isPrice(request.limitCents) &&
-    (request.side === 'buy'
-      ? request.limitCents >= quote.askCents
-      : request.limitCents <= quote.bidCents);
+  const marketableLimit = isMarketable(request, quote);
 
   const order: Order = {
     id: nextId('o'),

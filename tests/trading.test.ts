@@ -7,6 +7,8 @@ import {
   fillPrice,
   liquidationPrice,
   maintenanceMargin,
+  maxAffordableQty,
+  previewMarketOrder,
   positionNotional,
   requiredMargin,
   resetAccount,
@@ -597,5 +599,70 @@ describe('trading store', () => {
     const account = useTrading.getState().active();
     expect(account.orders).toHaveLength(0);
     expect(account.balanceCents).toBe(account.settings.startingBalanceCents);
+  });
+});
+
+describe('the largest affordable order', () => {
+  /**
+   * The order panel's "%" control divides this number up, so 100% has to be a
+   * size that is actually accepted — and 100% plus a hair has to not be.
+   */
+  it('is affordable, and one step more is not', () => {
+    const acc = account({ leverage: 20 });
+    const q = quote(4_000_000);
+    const max = maxAffordableQty(acc, 'buy', q);
+    expect(max).toBeGreaterThan(0);
+    expect(previewMarketOrder(acc, 'buy', max, q).affordable).toBe(true);
+    expect(previewMarketOrder(acc, 'buy', max + 1, q).affordable).toBe(false);
+  });
+
+  it('holds at every leverage', () => {
+    const q = quote(4_000_000);
+    for (const leverage of [1, 2, 5, 10, 25, 50, 125]) {
+      const acc = account({ leverage });
+      const max = maxAffordableQty(acc, 'buy', q);
+      expect(previewMarketOrder(acc, 'buy', max, q).affordable).toBe(true);
+      expect(previewMarketOrder(acc, 'buy', max + 1, q).affordable).toBe(false);
+    }
+  });
+
+  it('holds for both sides', () => {
+    const acc = account({ leverage: 10 });
+    const q = quote(4_000_000);
+    for (const side of ['buy', 'sell'] as const) {
+      const max = maxAffordableQty(acc, side, q);
+      expect(previewMarketOrder(acc, side, max, q).affordable).toBe(true);
+      expect(previewMarketOrder(acc, side, max + 1, q).affordable).toBe(false);
+    }
+  });
+
+  it('grows when the commission is cut', () => {
+    const q = quote(4_000_000);
+    const dear = maxAffordableQty(account({ leverage: 10, takerFeePpm: 5000 }), 'buy', q);
+    const cheap = maxAffordableQty(account({ leverage: 10, takerFeePpm: 0 }), 'buy', q);
+    expect(cheap).toBeGreaterThan(dear);
+  });
+
+  it('leaves no available margin once the whole of it is used', () => {
+    const acc = account({ leverage: 20 });
+    const q = quote(4_000_000);
+    const filled = submitMarketOrder(acc, 'buy', maxAffordableQty(acc, 'buy', q), q).account;
+    const after = accountMetrics(filled, q);
+    expect(after.availableCents).toBeGreaterThanOrEqual(0);
+    // Within a cent of nothing left: the whole account is committed.
+    expect(after.availableCents).toBeLessThan(100);
+  });
+
+  it('is zero for an account with no equity left', () => {
+    const broke = { ...account(), balanceCents: 0 };
+    expect(maxAffordableQty(broke, 'buy', quote(4_000_000))).toBe(0);
+  });
+
+  it('allows a reduce-only sized order against an open position', () => {
+    const acc = account({ leverage: 10 });
+    const q = quote(4_000_000);
+    const opened = submitMarketOrder(acc, 'buy', unitsToQty(1), q).account;
+    // Selling is partly a reduction, so more is affordable than from flat.
+    expect(maxAffordableQty(opened, 'sell', q)).toBeGreaterThan(maxAffordableQty(acc, 'sell', q));
   });
 });

@@ -1,4 +1,4 @@
-import { applyPpm, notional, QTY_SCALE, type Cents, type Qty } from './money';
+import { applyPpm, notional, qtyFromNotional, QTY_SCALE, type Cents, type Qty } from './money';
 import {
   FLAT_POSITION,
   type Account,
@@ -159,6 +159,105 @@ export function resetIdSequence(): void {
   sequence = 0;
 }
 
+export interface MarketOrderPreview {
+  /** Price it is expected to fill at, spread and slippage included. */
+  priceCents: Cents;
+  /** Commission it would pay, at the taker rate. */
+  feeCents: Cents;
+  /** Realised P&L the fill would book, if it closes any of the position. */
+  realisedCents: Cents;
+  /** The position that would result. */
+  position: Position;
+  /** Balance after the fill's realised P&L and its commission. */
+  balanceCents: Cents;
+  /** Equity once the fill, its commission and its mark-to-market have landed. */
+  equityCents: Cents;
+  /** Margin the resulting position would have to be backed by. */
+  requiredCents: Cents;
+  /** Whether the order grows exposure; only those are margin-checked. */
+  grows: boolean;
+  /** Whether the account can cover it. */
+  affordable: boolean;
+  /** How much more equity it would take to cover it; 0 when it is affordable. */
+  shortfallCents: Cents;
+}
+
+/**
+ * Work out what a market order would do, without doing it.
+ *
+ * The order panel has to tell the user whether an order is affordable before
+ * they commit to it, and the only answer that cannot drift from reality is the
+ * one the submit path itself computes — so both go through here. Getting this
+ * wrong is worse than it sounds: a panel that says "required margin 95,000,
+ * available 100,000" and then rejects the order looks broken, because from the
+ * user's side it is.
+ */
+export function previewMarketOrder(
+  account: Account,
+  side: Side,
+  qty: Qty,
+  quote: Quote,
+): MarketOrderPreview {
+  const size = Math.abs(qty);
+  const priceCents = fillPrice(side, size, quote, account.settings);
+  const { position, realisedCents } = applyFill(
+    account.position,
+    side,
+    size,
+    priceCents,
+    quote.timeMs,
+  );
+  const feeCents = applyPpm(Math.abs(notional(priceCents, size)), account.settings.takerFeePpm);
+  const balanceCents = account.balanceCents + realisedCents - feeCents;
+  const equityCents = balanceCents + unrealisedPnl(position, quote.lastCents);
+  const requiredCents = requiredMargin(position, quote.lastCents, account.settings);
+  const grows = Math.abs(position.qty) > Math.abs(account.position.qty);
+  const shortfallCents = grows ? Math.max(0, requiredCents - equityCents) : 0;
+  return {
+    priceCents,
+    feeCents,
+    realisedCents,
+    position,
+    balanceCents,
+    equityCents,
+    requiredCents,
+    grows,
+    affordable: shortfallCents === 0,
+    shortfallCents,
+  };
+}
+
+/**
+ * The largest market order this account could actually afford right now.
+ *
+ * Solved by bisection rather than algebra, because the cost of an order is not
+ * proportional to its size: slippage grows with it, the spread is paid across
+ * all of it, and an existing position may be reduced rather than grown. Asking
+ * `previewMarketOrder` where the edge is finds it exactly, whatever the rules
+ * happen to be, and costs a few dozen multiplications.
+ *
+ * This is what the order panel's "%" control divides up, so that 100% means the
+ * biggest order that will actually be accepted rather than a number that is
+ * always rejected.
+ */
+export function maxAffordableQty(account: Account, side: Side, quote: Quote): Qty {
+  const equity = account.balanceCents + unrealisedPnl(account.position, quote.lastCents);
+  if (equity <= 0) return 0;
+  const reference = Math.max(1, side === 'buy' ? quote.askCents : quote.bidCents);
+  // Margin alone would allow this much, so the true answer is never above it.
+  let hi = qtyFromNotional(equity * Math.max(1, account.settings.leverage), reference);
+  if (hi <= 0) return 0;
+  if (previewMarketOrder(account, side, hi, quote).affordable) return hi;
+
+  let lo = 0;
+  while (hi - lo > 1) {
+    const mid = lo + Math.floor((hi - lo) / 2);
+    if (previewMarketOrder(account, side, mid, quote).affordable) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
 /**
  * Submit a market order.
  *
@@ -192,16 +291,11 @@ export function submitMarketOrder(
     };
   }
 
-  const price = fillPrice(side, order.qty, quote, account.settings);
-  const { position, realisedCents } = applyFill(account.position, side, order.qty, price, now);
-  const feeCents = applyPpm(Math.abs(notional(price, order.qty)), account.settings.takerFeePpm);
-
-  const balanceCents = account.balanceCents + realisedCents - feeCents;
-  const equity = balanceCents + unrealisedPnl(position, quote.lastCents);
-  const required = requiredMargin(position, quote.lastCents, account.settings);
+  const preview = previewMarketOrder(account, side, order.qty, quote);
+  const { priceCents: price, feeCents, realisedCents, position, balanceCents } = preview;
 
   // A system order (a liquidation) is never blocked by its own margin check.
-  if (!options.system && equity < required && Math.abs(position.qty) > Math.abs(account.position.qty)) {
+  if (!options.system && !preview.affordable) {
     return {
       account,
       order: { ...order, status: 'rejected', reason: 'Not enough margin' },

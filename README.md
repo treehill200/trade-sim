@@ -68,7 +68,8 @@ The panel on the right places orders; the panel along the bottom tracks the acco
 
 - **Buy or sell at market** — pick a side, type a size in DAVID, in USD, or as a percentage of what
   your leverage lets you put to work, and submit. The summary shows the trade value, the margin it
-  needs and what you have available before you commit.
+  needs, the commission it will pay and what you have available before you commit. At 100% the size
+  is the biggest order the account can actually take, commission and spread included.
 - **Limit, stop and stop-limit orders** rest until the market reaches them. A limit gets its own
   price; a stop triggers on the last price and then fills at market, slippage and all.
 - **Take-profit and stop-loss brackets**, set by price, ticks, percentage or dollar amount. They are

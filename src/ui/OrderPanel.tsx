@@ -13,6 +13,8 @@ import {
   unitsToQty,
   type Qty,
 } from '@/trading/money';
+import { previewOrder } from '@/trading/orders';
+import { maxAffordableQty } from '@/trading/engine';
 import type { OrderRequest, OrderType, Side } from '@/trading/types';
 import {
   DEFAULT_STOP_LOSS,
@@ -68,10 +70,11 @@ export function OrderPanel(): JSX.Element {
     if (!Number.isFinite(value) || value <= 0) return 0;
     if (sizeMode === 'qty') return unitsToQty(value);
     if (sizeMode === 'usd') return qtyFromNotional(dollarsToCents(value), referenceCents || 1);
-    // Percent of what the account could put to work at its leverage.
-    const budget = Math.max(0, metrics.availableCents) * account.settings.leverage;
-    return qtyFromNotional(Math.round((budget * value) / 100), referenceCents || 1);
-  }, [sizeText, sizeMode, referenceCents, metrics.availableCents, account.settings.leverage]);
+    // Percent of what the account can actually put to work — margin, commission
+    // and the spread all come out of the same money, so the engine works out
+    // where the ceiling is and 100% means exactly that.
+    return Math.floor((maxAffordableQty(account, side, quote) * value) / 100);
+  }, [sizeText, sizeMode, referenceCents, account, side, quote]);
 
   const limitCents = Number(priceText) > 0 ? dollarsToCents(Number(priceText)) : undefined;
   const stopCents = Number(stopText) > 0 ? dollarsToCents(Number(stopText)) : undefined;
@@ -89,13 +92,38 @@ export function OrderPanel(): JSX.Element {
   const slCents = exitPrice(stopLoss, entryCents, qty, long, false);
 
   const tradeValue = Math.abs(notional(entryCents, qty));
-  const requiredMargin = Math.ceil(tradeValue / Math.max(1, account.settings.leverage));
-  const enoughMargin = requiredMargin <= metrics.availableCents;
 
   const needsLimit = orderType === 'limit' || orderType === 'stopLimit';
   const needsStop = orderType === 'stop' || orderType === 'stopLimit';
   const missingPrice = (needsLimit && limitCents === undefined) || (needsStop && stopCents === undefined);
   const ready = qty > 0 && !missingPrice;
+
+  /**
+   * What the engine would make of this order.
+   *
+   * Asking it, rather than reproducing its arithmetic here, is what keeps the
+   * panel from offering an order that submitting then rejects.
+   */
+  const preview = useMemo(() => {
+    if (!ready) return null;
+    const request: OrderRequest = {
+      side,
+      type: orderType,
+      qty,
+      ...(limitCents !== undefined ? { limitCents } : {}),
+      ...(stopCents !== undefined ? { stopCents } : {}),
+    };
+    return previewOrder(account, request, quote);
+  }, [ready, side, orderType, qty, limitCents, stopCents, account, quote]);
+
+  const requiredMargin = preview?.requiredCents ?? 0;
+  const estimatedFee = preview?.feeCents ?? 0;
+  const enoughMargin = preview === null || preview.affordable;
+  /**
+   * A percentage of nothing is nothing, which would otherwise leave the submit
+   * button dead with no explanation of why.
+   */
+  const noRoom = sizeMode === 'percent' && Number(sizeText) > 0 && qty === 0;
 
   const submit = (): void => {
     if (!ready) return;
@@ -224,6 +252,10 @@ export function OrderPanel(): JSX.Element {
               <dd className={enoughMargin ? '' : 'down'}>{formatCents(requiredMargin)}</dd>
             </div>
             <div>
+              <dt>{preview?.immediate === false ? 'Commission on fill' : 'Commission'}</dt>
+              <dd>{formatCents(estimatedFee)}</dd>
+            </div>
+            <div>
               <dt>Available margin</dt>
               <dd>{formatCents(Math.max(0, metrics.availableCents))}</dd>
             </div>
@@ -267,9 +299,18 @@ export function OrderPanel(): JSX.Element {
             </span>
           </button>
           {!enoughMargin && qty > 0 && (
-            <div className="field-error">Not enough available margin for this size.</div>
+            <div className="field-error">
+              {formatCents(preview?.shortfallCents ?? 0)} short for this size. Reduce it, or raise
+              the leverage in the account settings.
+            </div>
           )}
           {missingPrice && <div className="field-error">Enter a price for this order type.</div>}
+          {noRoom && (
+            <div className="field-error">
+              There is no margin left for a new position. Close or reduce the one you have, or
+              raise the leverage in the account settings.
+            </div>
+          )}
         </div>
       )}
 

@@ -6,6 +6,7 @@ import {
   cancelOrder,
   defaultBracketPrices,
   modifyOrder,
+  previewOrder,
   processOrders,
   resetOrderIdSequence,
   submitOrder,
@@ -527,5 +528,113 @@ describe('order books stay consistent', () => {
     const out = processOrders(acc, quote(4_000_000), range(3_990_000, 4_010_000));
     expect(out.account).toBe(acc);
     expect(out.executions).toHaveLength(0);
+  });
+});
+
+describe('the order preview matches what submitting actually does', () => {
+  /**
+   * The order panel decides whether to enable its submit button from
+   * `previewOrder`. If that ever disagrees with `submitOrder`, the panel offers
+   * an order that is then rejected — which is what this suite exists to stop.
+   */
+  const agree = (acc: Account, request: Parameters<typeof previewOrder>[1], q: Quote): void => {
+    const preview = previewOrder(acc, request, q);
+    const result = submitOrder(acc, request, q);
+    expect(preview.affordable).toBe(result.rejected === undefined);
+    if (!preview.affordable) expect(result.rejected).toBe(preview.reason);
+  };
+
+  it('agrees on a market order the account can easily cover', () => {
+    agree(account(), { side: 'buy', type: 'market', qty: unitsToQty(0.1) }, quote(5_000_000));
+  });
+
+  it('agrees on a market order that is far too big', () => {
+    agree(account(), { side: 'buy', type: 'market', qty: unitsToQty(500) }, quote(5_000_000));
+  });
+
+  it('agrees right at the edge, where the commission decides it', () => {
+    // A $100,000 balance at 10x covers $1,000,000 of notional on margin alone,
+    // which at $10,000 a coin is 100 units — but the taker fee comes out of the
+    // same money, so the largest order that actually fits is smaller than that.
+    const acc = account({ leverage: 10, takerFeePpm: 5500, spread: false, slippage: false });
+    const q = quote(1_000_000, 0);
+    const marginOnly = unitsToQty(100);
+    agree(acc, { side: 'buy', type: 'market', qty: marginOnly }, q);
+    expect(previewOrder(acc, { side: 'buy', type: 'market', qty: marginOnly }, q).affordable).toBe(
+      false,
+    );
+
+    // Back it off by more than the commission and both accept it.
+    const fits = unitsToQty(94);
+    agree(acc, { side: 'buy', type: 'market', qty: fits }, q);
+    expect(previewOrder(acc, { side: 'buy', type: 'market', qty: fits }, q).affordable).toBe(true);
+  });
+
+  it('agrees on a resting limit, whose commission is not held against it', () => {
+    const acc = account({ leverage: 10 });
+    const q = quote(1_000_000);
+    const request = {
+      side: 'buy' as const,
+      type: 'limit' as const,
+      qty: unitsToQty(5),
+      limitCents: 900_000,
+    };
+    agree(acc, request, q);
+    const preview = previewOrder(acc, request, q);
+    expect(preview.immediate).toBe(false);
+    expect(preview.feeCents).toBe(
+      Math.round((900_000 * 5 * DEFAULT_SETTINGS.makerFeePpm) / 1_000_000),
+    );
+  });
+
+  it('charges the taker rate on a limit that crosses the spread', () => {
+    const acc = account({ leverage: 10 });
+    const q = quote(1_000_000);
+    const preview = previewOrder(
+      acc,
+      { side: 'buy', type: 'limit', qty: unitsToQty(1), limitCents: q.askCents + 1000 },
+      q,
+    );
+    expect(preview.immediate).toBe(true);
+  });
+
+  it('agrees on an oversized stop order', () => {
+    agree(
+      account({ leverage: 5 }),
+      { side: 'sell', type: 'stop', qty: unitsToQty(200), stopCents: 4_900_000 },
+      quote(5_000_000),
+    );
+  });
+
+  it('lets a reduce-only exit through even when margin is exhausted', () => {
+    const acc = account({ leverage: 100 });
+    const q = quote(1_000_000);
+    const opened = submitOrder(acc, { side: 'buy', type: 'market', qty: unitsToQty(900) }, q)
+      .account;
+    const request = {
+      side: 'sell' as const,
+      type: 'limit' as const,
+      qty: unitsToQty(900),
+      limitCents: 1_100_000,
+      reduceOnly: true,
+    };
+    agree(opened, request, q);
+    expect(previewOrder(opened, request, q).affordable).toBe(true);
+  });
+
+  it('rejects a zero quantity from both sides, with the same reason', () => {
+    agree(account(), { side: 'buy', type: 'market', qty: 0 }, quote(5_000_000));
+    expect(previewOrder(account(), { side: 'buy', type: 'market', qty: 0 }, quote(5_000_000)).reason)
+      .toBe('Quantity must be greater than zero');
+  });
+
+  it('never disagrees across a sweep of sizes around the limit', () => {
+    // The sweep runs straight through the affordable/not-affordable boundary,
+    // which at 20x with a 20bp taker fee sits a little under 97 units.
+    const acc = account({ leverage: 20, takerFeePpm: 2000 });
+    const q = quote(2_000_000);
+    for (let units = 88; units <= 108; units += 0.25) {
+      agree(acc, { side: 'buy', type: 'market', qty: unitsToQty(units) }, q);
+    }
   });
 });

@@ -418,3 +418,23 @@ container, which is the slow case.
   versions 18 and 16.4 respectively.
 - **The production worker is a classic worker, not a module one.** Vite bundles it that way, which
   widens support at no cost to the source, where it stays an ES module.
+
+## Order affordability
+
+- **The panel asks the engine whether an order would be accepted; it does not work it out itself.**
+  It used to compare margin against available funds on its own, which ignored the commission — so at
+  high leverage the panel would show "required margin 95,000, available 100,000", enable the submit
+  button, and then reject the order. From the user's side that is indistinguishable from a broken
+  app. `previewOrder` is now the single answer both the panel and the submit path use, and a test
+  sweeps sizes across the boundary asserting the two never disagree.
+- **The commission is shown before you commit**, labelled "Commission on fill" for a resting order,
+  because it is charged when the order fills rather than when it is placed.
+- **The "%" control divides up the largest order that would actually be accepted**, found by
+  bisecting on the engine's own preview rather than by algebra. The cost of an order is not
+  proportional to its size — slippage grows with it, the spread is paid across all of it, and an
+  existing position may be reduced rather than grown — so a formula would be an approximation that
+  drifts the moment any rule changes. 100% now fills and leaves available margin at zero.
+- **A rejection says how much short it is**, not merely that something is wrong, and the panel says
+  so before the order is sent rather than after.
+- **Running out of room says so.** A percentage of nothing is nothing, which would otherwise leave
+  the submit button dead with no explanation.
