@@ -6,9 +6,10 @@ single-page web app with an interface modelled on a professional charting termin
 Everything is simulated: the prices, the order book, the fills and the account. There is no real
 market data, no real money, and no server. It all runs in your browser.
 
-> **Build status:** Phases 1-4 of 7 are complete — the market engine, the chart, the indicators and
-> the drawing tools. The trading side (orders, positions, PnL) arrives in later phases. See
-> `DECISIONS.md` for the running log of technical choices.
+> **Build status:** Phases 1-5 of 7 are complete — the market engine, the chart, the indicators, the
+> drawing tools and the trading engine. Limit and stop orders, brackets, on-chart order lines and
+> the journal arrive in the last two phases. See `DECISIONS.md` for the running log of technical
+> choices.
 
 ## Running it
 
@@ -64,6 +65,28 @@ later visit opens almost instantly.
   colour, width, dash, clone, lock and delete, and press Delete to remove it.
 - **Save a PNG of the chart** with the camera button.
 - **Change your time zone** from the dropdown in the bottom-right corner.
+
+## Trading
+
+The panel on the right places orders; the panel along the bottom tracks the account.
+
+- **Buy or sell at market** — pick a side, type a size in DAVID, in USD, or as a percentage of what
+  your leverage lets you put to work, and submit. The summary shows the trade value, the margin it
+  needs and what you have available before you commit.
+- **One net position per account.** Buying while short reduces the short, and a big enough order
+  reverses straight through flat. The Positions row has Reverse and Close buttons.
+- **Leverage from 1x to 125x**, custom starting balance, maker and taker commissions, maintenance
+  margin, and switches for slippage and the bid/ask spread — all in the gear icon on the order
+  panel.
+- **Liquidation is real.** The position's liquidation price is shown on the Positions row, and if
+  equity falls below the maintenance requirement the position is closed automatically with a notice
+  telling you what happened.
+- **The bottom panel** shows balance, equity, realised and unrealised P&L, available funds, orders
+  margin, margin buffer and fees paid, with tabs for Positions, Working Orders and Order History.
+  Drag its top edge to resize it, or collapse it with the chevron.
+
+Everything is simulated and nothing leaves your browser. There is no real money involved at any
+point.
 
 ## Drawing tools
 
@@ -121,10 +144,11 @@ src/
   chart/       the canvas charting engine: scales, panes, renderer, chart types
   indicators/  indicator maths, the catalogue, and the result cache
   drawings/    drawing model, coordinate mapping, geometry and rendering
+  trading/     exact money arithmetic, the order engine and account metrics
   state/       Zustand UI store and the main-thread client for the market worker
   storage/     IndexedDB and localStorage helpers
   ui/          React components for the toolbars, legends and dialogs
-tests/         Vitest suites for the engine, aggregation, chart maths, indicators and drawings
+tests/         Vitest suites for the market, chart maths, indicators, drawings and trading
 ```
 
 ## Starting over

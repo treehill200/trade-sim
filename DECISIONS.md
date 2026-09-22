@@ -227,3 +227,48 @@ container, which is the slow case.
   leave an invisible drawing behind.
 - **Saved drawings are sanitised on load** for the same reason indicators are: a malformed one from
   an older version would otherwise throw while rendering and take the whole chart with it.
+
+## Phase 5 — trading engine, order panel and account panel
+
+### Money
+- **Nothing is a float.** Dollars are integer cents, quantities are integer micro-units (a millionth
+  of a DAVID). `dollarsToCents(0.1) + dollarsToCents(0.2)` is exactly 30, and a test says so.
+- **`notional` splits the quantity into whole and fractional units before multiplying.** The obvious
+  `price * qty / SCALE` reaches 4e15 for a thousand-DAVID position at $40,000 — uncomfortably close
+  to the largest exact integer — so it is computed in two safe halves instead.
+- **Rates are parts per million**, so a commission of 0.055% is the integer 550 and applying it is
+  one multiply and one round.
+
+### The engine is pure
+- **Every operation takes an account and returns a new one.** Fills, commission, realised profit,
+  margin and liquidation are therefore testable with no browser, no chart and no clock, and the UI
+  cannot put the account into a state the engine did not sanction. 61 tests cover it.
+- **A position stores its total cost, not an average price.** Reducing a position takes out exactly
+  the proportional share of that cost, so partial closes cannot accumulate rounding error in the
+  entry price — closing an awkward quantity in seven pieces at the entry price nets to exactly zero.
+- **One `applyFill` handles all four cases** — opening, adding, reducing and reversing through flat —
+  and unrealised profit is `notional(mark, qty) - cost`, which is correct for longs and shorts
+  without a single branch on direction.
+
+### Realism
+- **Slippage grows with the square root-ish of size and linearly with volatility**, and always moves
+  the price against the trader. A ten times larger order costs about four times the extra, which is
+  how walking a real book behaves. Both slippage and the spread can be switched off.
+- **Margin is measured against the mark price, not the entry**, so a position that moves in your
+  favour ties up more margin — as it does on a real venue.
+- **The liquidation price is solved analytically** from `equity = maintenance`, and a test checks
+  that equity really does equal the maintenance requirement at the price the formula returns.
+- **An order that reduces the position is never rejected for margin**, so a trader can always get
+  out of trouble even when there is no free margin to get further into it.
+- **Liquidation is checked off the market feed**, four times a second, not on render: equity has to
+  be tested against prices as they arrive, not when the user next looks at the screen.
+
+### State and UI
+- **Account history is capped at 500 orders and executions.** Everything is written to localStorage,
+  and the journal and statistics only ever need recent activity.
+- **Saved accounts are sanitised on load**, filling in any setting that did not exist when they were
+  written — an undefined leverage would otherwise quietly break the margin maths.
+- **The starting balance can only be changed on an untouched account**, because changing it
+  mid-session would make the realised-profit figures meaningless.
+- **Notices are a small store with a render-time timer**, so a liquidation can be reported from
+  outside React and still appear as a toast.

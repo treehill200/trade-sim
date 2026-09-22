@@ -1,6 +1,10 @@
 import { useEffect } from 'react';
 import { ChartCanvas } from '@/chart/ChartCanvas';
 import { DrawingToolbar } from '@/ui/DrawingToolbar';
+import { OrderPanel } from '@/ui/OrderPanel';
+import { AccountPanel } from '@/ui/AccountPanel';
+import { Toasts } from '@/ui/Toasts';
+import { useMarkToMarket } from '@/ui/useQuote';
 import { TopToolbar } from '@/ui/TopToolbar';
 import { BottomBar } from '@/ui/BottomBar';
 import { LoadingOverlay } from '@/ui/LoadingOverlay';
@@ -17,6 +21,7 @@ export function App(): JSX.Element {
   const timeframe = useUi((s) => s.timeframe);
   const theme = useUi((s) => s.theme);
   const status = useMarketStatus();
+  useMarkToMarket();
 
   useEffect(() => {
     marketClient.start(useUi.getState().timeframe);
@@ -47,13 +52,18 @@ export function App(): JSX.Element {
         <TopToolbar />
         <main className="workspace">
           <DrawingToolbar />
-          <div className="chart-area">
-            <ChartCanvas />
+          <div className="chart-column">
+            <div className="chart-area">
+              <ChartCanvas />
+            </div>
+            <AccountPanel />
           </div>
+          <OrderPanel />
         </main>
         <BottomBar />
         <LoadingOverlay status={status} />
         <SettingsDialogHost />
+        <Toasts />
       </div>
     </IndicatorSettingsProvider>
   );
