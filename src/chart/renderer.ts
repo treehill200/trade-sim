@@ -70,10 +70,17 @@ export interface RenderInput {
   dpr: number;
 }
 
-export function render(ctx: CanvasRenderingContext2D, input: RenderInput): void {
+/**
+ * Draw a frame, and hand back the live price tag's box.
+ *
+ * The tag is drawn here, but it is also the single most important number on
+ * the axis, so the caller redraws it once the order and alert tags are down —
+ * otherwise a line dropped near the market hides the market price.
+ */
+export function render(ctx: CanvasRenderingContext2D, input: RenderInput): TagBox | null {
   const { plot, timeScale: ts, panes, theme, dpr } = input;
   const mainPane = panes[0];
-  if (!mainPane) return;
+  if (!mainPane) return null;
   const totalWidth = ts.width + PRICE_AXIS_WIDTH;
   const lastPane = panes[panes.length - 1] as Pane;
   const plotBottom = lastPane.priceScale.top + lastPane.priceScale.height;
@@ -135,6 +142,25 @@ export function render(ctx: CanvasRenderingContext2D, input: RenderInput): void 
   if (input.crosshair.visible) drawCrosshair(ctx, input, plotBottom);
 
   drawFrame(ctx, input, plotBottom, totalWidth, totalHeight);
+  ctx.restore();
+  return tagBox;
+}
+
+/**
+ * Redraw the live price tag over whatever has since been drawn on the axis.
+ *
+ * Takes the box `render` returned, so it lands in exactly the same place.
+ */
+export function drawLastPriceTagOnTop(
+  ctx: CanvasRenderingContext2D,
+  input: RenderInput,
+  box: TagBox | null,
+): void {
+  if (!box) return;
+  ctx.save();
+  // The layers drawn in between set their own transforms, so restore ours.
+  ctx.setTransform(input.dpr, 0, 0, input.dpr, 0, 0);
+  drawLastPriceTag(ctx, input, box);
   ctx.restore();
 }
 

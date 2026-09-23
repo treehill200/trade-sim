@@ -3,7 +3,13 @@ import { marketClient } from '@/state/marketClient';
 import { useUi, type DateRange } from '@/state/store';
 import { themeByName } from './theme';
 import { PriceScale, TimeScale, clamp, MAX_BAR_SPACING, MIN_BAR_SPACING } from './scales';
-import { PRICE_AXIS_WIDTH, TIME_AXIS_HEIGHT, render, type CrosshairState } from './renderer';
+import {
+  drawLastPriceTagOnTop,
+  PRICE_AXIS_WIDTH,
+  render,
+  TIME_AXIS_HEIGHT,
+  type CrosshairState,
+} from './renderer';
 import { HeikinAshiCache } from './plotSeries';
 import { chartController } from './chartController';
 import {
@@ -295,7 +301,7 @@ export function ChartCanvas(): JSX.Element {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      render(ctx, {
+      const renderInput = {
         series,
         plot,
         chartType,
@@ -313,7 +319,8 @@ export function ChartCanvas(): JSX.Element {
         liveClose: Number.isFinite(smoothCloseRef.current) ? smoothCloseRef.current : null,
         now: Date.now(),
         dpr,
-      });
+      };
+      const lastPriceTag = render(ctx, renderInput);
 
       const place = placeRef.current;
       const dw = useDrawings.getState();
@@ -353,6 +360,10 @@ export function ChartCanvas(): JSX.Element {
         drawExecutionMarkers(ctx, layer);
         drawTradingLines(ctx, layer);
       }
+
+      // Last of all, so an order or alert line dropped near the market never
+      // hides the market price itself.
+      drawLastPriceTagOnTop(ctx, renderInput, lastPriceTag);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
