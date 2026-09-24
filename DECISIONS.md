@@ -452,3 +452,18 @@ container, which is the slow case.
 - **The legend's hide / settings / remove buttons are visible at rest**, at reduced opacity, rather
   than appearing only on hover. Hiding them was tidier and meant nobody knew they existed — the
   chart looked like it had no way to remove an indicator once added.
+
+## Dragging order lines
+
+- **A line's label sits in the middle of the chart, not against the left edge.** The label is the
+  part that looks like a handle, so it is what people reach for — and the middle is where the
+  pointer already is when watching the price. Against the left edge it was both a long way from the
+  action and easy to mistake for part of the legend.
+- **A draggable line's label carries a grip mark and is taller than a fixed one's.** The entry and
+  liquidation lines cannot be moved, so they should not look as though they can.
+- **The label is a bigger grab zone than the line**: ±15px there against ±8px along the rest of the
+  line, up from ±5px everywhere. Aiming at a one-pixel line is the kind of precision a charting tool
+  should not ask for.
+- **Overlapping lines resolve to the nearest.** A take-profit and a stop-loss squeezed together used
+  to hand back whichever came first in the list; with a grab zone this size that would often be the
+  wrong one.

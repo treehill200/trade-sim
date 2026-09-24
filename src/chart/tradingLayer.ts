@@ -24,6 +24,24 @@ export interface TradingLayerInput {
 /** How many of the most recent fills are marked on the chart. */
 const MAX_MARKERS = 400;
 
+/**
+ * How close the pointer has to be to grab a line, in CSS pixels.
+ *
+ * Anywhere along the line works; the label in the middle is a deliberately
+ * fatter target, because that is the part that looks like a handle and is
+ * therefore what people actually aim at.
+ */
+export const LINE_GRAB_TOLERANCE = 8;
+/** Half-width of the label's larger grab zone, around the middle of the chart. */
+export const LABEL_GRAB_HALF_WIDTH = 110;
+/** Vertical reach inside that zone. */
+export const LABEL_GRAB_TOLERANCE = 15;
+
+/** Height of a line's label pill; a draggable one is taller, to grab hold of. */
+function labelHeight(draggable: boolean): number {
+  return draggable ? 22 : 18;
+}
+
 function toneColor(tone: LineTone, theme: ChartTheme): string {
   if (tone === 'up') return theme.up;
   if (tone === 'down') return theme.down;
@@ -61,21 +79,36 @@ export function drawTradingLines(ctx: CanvasRenderingContext2D, input: TradingLa
     ctx.stroke();
     ctx.restore();
 
-    // Label at the left, clear of the OHLC legend's column.
+    // The label sits in the middle of the chart, not against the left edge:
+    // it doubles as the handle you drag the line by, and the middle is where
+    // the pointer already is. It also keeps clear of the OHLC legend.
     ctx.save();
     ctx.font = '500 11px Inter, system-ui, sans-serif';
+    const grip = line.draggable ? 11 : 0;
     const textWidth = ctx.measureText(line.label).width;
-    const boxWidth = textWidth + 14;
-    const boxX = 8;
+    const boxWidth = textWidth + 14 + grip;
+    const boxHeight = labelHeight(Boolean(line.draggable));
+    const boxX = Math.max(8, Math.round((ts.width - boxWidth) / 2));
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.92;
-    roundRect(ctx, boxX, y - 9, boxWidth, 18, 3);
+    roundRect(ctx, boxX, y - boxHeight / 2, boxWidth, boxHeight, 3);
     ctx.fill();
     ctx.globalAlpha = 1;
+
+    // Three short bars: the usual "you can drag this" mark.
+    if (line.draggable) {
+      ctx.fillStyle = '#ffffff';
+      ctx.globalAlpha = 0.75;
+      for (let i = -1; i <= 1; i += 1) {
+        ctx.fillRect(crisp(boxX + 6, dpr), crisp(y + i * 3 - 0.5, dpr), 7, 1);
+      }
+      ctx.globalAlpha = 1;
+    }
+
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(line.label, boxX + 7, y);
+    ctx.fillText(line.label, boxX + 7 + grip, y);
     ctx.restore();
 
     // Price tag on the axis, matching the line's colour.

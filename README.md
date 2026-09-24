@@ -76,8 +76,9 @@ The panel on the right places orders; the panel along the bottom tracks the acco
 - **Take-profit and stop-loss brackets**, set by price, ticks, percentage or dollar amount. They are
   linked: whichever fills first cancels the other, and closing the position by any route cancels
   both.
-- **Manage orders on the chart.** Working orders appear as labelled lines with an X to cancel, and
-  you can drag a line to move the order. The position line shows its size and live P&L with buttons
+- **Manage orders on the chart.** Working orders appear as labelled lines with an X to cancel. Each
+  line carries its label in the middle of the chart with a grip mark on it — drag that to move the
+  order, which is the easiest way to set a take-profit or stop-loss by eye. The position line shows its size and live P&L with buttons
   to add brackets, reverse or close. Arrows mark every candle where a fill happened.
 - **Trade from the DOM.** Click a level in the depth ladder for a limit order there, or hold shift
   for a stop.

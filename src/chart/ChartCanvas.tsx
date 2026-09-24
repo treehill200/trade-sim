@@ -40,7 +40,13 @@ import {
 import type { Drawing, DrawingPoint } from '@/drawings/types';
 import { useDrawings } from '@/state/drawingsStore';
 import { chartMapping } from './chartMapping';
-import { drawExecutionMarkers, drawTradingLines } from './tradingLayer';
+import {
+  drawExecutionMarkers,
+  drawTradingLines,
+  LABEL_GRAB_HALF_WIDTH,
+  LABEL_GRAB_TOLERANCE,
+  LINE_GRAB_TOLERANCE,
+} from './tradingLayer';
 import { alertChartLines, chartLines } from '@/trading/chartLines';
 import { useAlerts } from '@/state/alertsStore';
 import { accountMetrics } from '@/trading/metrics';
@@ -421,25 +427,37 @@ export function ChartCanvas(): JSX.Element {
    *
    * Only orders are draggable: the position's entry and its liquidation price
    * are consequences of the position, not things the user can move.
+   *
+   * The label in the middle of the line is a bigger target than the line
+   * itself, since that is the part that looks like a handle. Lines are tested
+   * nearest-first so that two sitting almost on top of each other — a
+   * take-profit and a stop-loss squeezed together — still pick the one meant.
    */
   const orderLineAt = useCallback(
     (x: number, y: number): { orderId?: string; alertId?: string } | null => {
       const map = mapRef.current;
-      if (!map || x > timeScaleRef.current.width) return null;
+      const width = timeScaleRef.current.width;
+      if (!map || x > width) return null;
       const account = useTrading.getState().active();
       const quote = currentQuote();
       if (quote.lastCents <= 0) return null;
-      const lines = [
+      const onLabel = Math.abs(x - width / 2) <= LABEL_GRAB_HALF_WIDTH;
+      const reach = onLabel ? LABEL_GRAB_TOLERANCE : LINE_GRAB_TOLERANCE;
+
+      let best: { orderId?: string; alertId?: string } | null = null;
+      let bestDistance = Infinity;
+      for (const line of [
         ...chartLines(account, accountMetrics(account, quote)),
         ...alertChartLines(useAlerts.getState().alerts),
-      ];
-      for (const line of lines) {
+      ]) {
         if (!line.draggable) continue;
-        if (Math.abs(map.yOfPrice(line.priceCents) - y) > 5) continue;
-        if (line.orderId) return { orderId: line.orderId };
-        if (line.alertId) return { alertId: line.alertId };
+        const distance = Math.abs(map.yOfPrice(line.priceCents) - y);
+        if (distance > reach || distance >= bestDistance) continue;
+        bestDistance = distance;
+        if (line.orderId) best = { orderId: line.orderId };
+        else if (line.alertId) best = { alertId: line.alertId };
       }
-      return null;
+      return best;
     },
     [],
   );
