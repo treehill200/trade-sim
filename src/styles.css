@@ -693,7 +693,9 @@ body {
 .ind-actions {
   display: inline-flex;
   gap: 1px;
-  opacity: 0;
+  /* Visible at rest, not just on hover: hidden controls are controls nobody
+     knows exist, and "I added an indicator and can't remove it" is the result. */
+  opacity: 0.55;
   transition: opacity 90ms ease;
 }
 
@@ -864,10 +866,39 @@ body {
   flex: none;
   color: var(--text-muted);
   font-size: 11px;
+  white-space: nowrap;
+}
+
+.indicator-row.on .indicator-row-action {
+  color: var(--up);
+}
+
+/* The state at rest, swapped for what a click would do while hovering. */
+.row-state,
+.row-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.row-hint {
+  display: none;
+}
+
+.indicator-row:hover .row-state {
+  display: none;
+}
+
+.indicator-row:hover .row-hint {
+  display: inline-flex;
 }
 
 .indicator-row:hover .indicator-row-action {
   color: var(--accent);
+}
+
+.indicator-row:hover .row-hint.remove {
+  color: var(--down);
 }
 
 .settings-row {

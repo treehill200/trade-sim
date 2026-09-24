@@ -438,3 +438,17 @@ container, which is the slow case.
   so before the order is sent rather than after.
 - **Running out of room says so.** A percentage of nothing is nothing, which would otherwise leave
   the submit button dead with no explanation.
+
+## Indicators: one of each, and a visible way to remove them
+
+- **The same indicator cannot be added twice.** A second copy carries the same settings, so it draws
+  exactly on top of the first and produces two identical legend rows with nothing to tell them
+  apart. It can only ever be a mistake, so adding an indicator already on the chart does nothing.
+- **Settings saved before that rule are de-duplicated on load**, so a chart that already collected
+  copies heals itself rather than needing the user to find and remove them.
+- **A row in the Indicators dialog is a toggle**: click to add, click again to take it off. The row
+  shows "Added" at rest and "Remove" while hovering, so what a click will do is visible before it
+  happens.
+- **The legend's hide / settings / remove buttons are visible at rest**, at reduced opacity, rather
+  than appearing only on hover. Hiding them was tidier and meant nobody knew they existed — the
+  chart looked like it had no way to remove an indicator once added.

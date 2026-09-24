@@ -33,6 +33,8 @@ export interface UiState {
   paneRatios: Record<string, number>;
   addIndicator: (defId: string) => void;
   removeIndicator: (id: string) => void;
+  /** Remove whichever instance of this indicator is on the chart, if any. */
+  removeIndicatorByDef: (defId: string) => void;
   updateIndicator: (id: string, patch: Partial<IndicatorInstance>) => void;
   toggleIndicator: (id: string) => void;
   setPaneRatios: (ratios: Record<string, number>) => void;
@@ -95,11 +97,16 @@ const saved = { ...defaults, ...loadLocal<Partial<PersistedUi>>(LS_KEY, {}) };
 function sanitiseIndicators(list: unknown): IndicatorInstance[] {
   if (!Array.isArray(list)) return [];
   const out: IndicatorInstance[] = [];
+  // Settings saved before the chart allowed only one of each may hold
+  // duplicates; keep the first of any repeat rather than redrawing it.
+  const seen = new Set<string>();
   for (const raw of list) {
     if (typeof raw !== 'object' || raw === null) continue;
     const item = raw as Partial<IndicatorInstance>;
     const def = typeof item.defId === 'string' ? indicatorDef(item.defId) : undefined;
     if (!def || typeof item.id !== 'string') continue;
+    if (seen.has(def.id)) continue;
+    seen.add(def.id);
     out.push({
       id: item.id,
       defId: def.id,
@@ -142,6 +149,9 @@ export const useUi = create<UiState>((set, get) => ({
   addIndicator: (defId) => {
     const def = indicatorDef(defId);
     if (!def) return;
+    // One of each: a second copy of the same indicator with the same settings
+    // draws exactly on top of the first, so it can only ever be a mistake.
+    if (get().indicators.some((i) => i.defId === defId)) return;
     const instance: IndicatorInstance = {
       id: `${defId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
       defId,
@@ -152,6 +162,10 @@ export const useUi = create<UiState>((set, get) => ({
     };
     set({ indicators: [...get().indicators, instance] });
     persist(get());
+  },
+  removeIndicatorByDef: (defId) => {
+    const found = get().indicators.find((i) => i.defId === defId);
+    if (found) get().removeIndicator(found.id);
   },
   removeIndicator: (id) => {
     const paneRatios = { ...get().paneRatios };

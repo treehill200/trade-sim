@@ -50,8 +50,9 @@ later visit opens almost instantly.
 - **Change the cursor** between cross, dot and arrow, from the menu next to the chart-type menu.
 - **Add indicators** from the "Indicators" button in the top bar: moving averages, VWAP and
   Bollinger Bands draw over the candles; volume, RSI, MACD, ATR and Stochastic get their own pane.
-- **Tune any indicator** from its legend line — the eye hides it, the gear opens its settings
-  (lengths, colours, line widths) and the X removes it.
+  A green "Added" marks the ones on your chart — click one of those again to take it off.
+- **Tune or remove any indicator** from its legend line on the chart — the eye hides it, the gear
+  opens its settings (lengths, colours, line widths) and the X removes it.
 - **Resize a pane** by dragging the gap between it and its neighbour.
 - **Draw on the chart** from the toolbar down the left edge: trend lines, rays, horizontal and
   vertical lines, parallel channels, rectangles, Fibonacci retracements, long and short position

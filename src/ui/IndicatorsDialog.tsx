@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Plus, Search, X } from 'lucide-react';
+import { Check, Minus, Plus, Search, X } from 'lucide-react';
 import { INDICATOR_DEFS } from '@/indicators/defs';
 import { useUi } from '@/state/store';
 
@@ -8,6 +8,7 @@ export function IndicatorsDialog({ onClose }: { onClose: () => void }): JSX.Elem
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const addIndicator = useUi((s) => s.addIndicator);
+  const removeIndicatorByDef = useUi((s) => s.removeIndicatorByDef);
   const indicators = useUi((s) => s.indicators);
 
   useEffect(() => {
@@ -27,11 +28,13 @@ export function IndicatorsDialog({ onClose }: { onClose: () => void }): JSX.Elem
     );
   }, [query]);
 
-  const counts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const i of indicators) map.set(i.defId, (map.get(i.defId) ?? 0) + 1);
-    return map;
-  }, [indicators]);
+  const added = useMemo(() => new Set(indicators.map((i) => i.defId)), [indicators]);
+
+  /** Clicking a row adds the indicator, or takes it off if it is already on. */
+  const toggle = (defId: string): void => {
+    if (added.has(defId)) removeIndicatorByDef(defId);
+    else addIndicator(defId);
+  };
 
   const overlays = results.filter((d) => d.overlay);
   const panes = results.filter((d) => !d.overlay);
@@ -59,11 +62,11 @@ export function IndicatorsDialog({ onClose }: { onClose: () => void }): JSX.Elem
           {results.length === 0 && <p className="modal-empty">Nothing matches “{query}”.</p>}
           {overlays.length > 0 && <h3 className="modal-group">On the price chart</h3>}
           {overlays.map((d) => (
-            <IndicatorRow key={d.id} def={d} count={counts.get(d.id) ?? 0} onAdd={addIndicator} />
+            <IndicatorRow key={d.id} def={d} on={added.has(d.id)} onToggle={toggle} />
           ))}
           {panes.length > 0 && <h3 className="modal-group">In their own pane</h3>}
           {panes.map((d) => (
-            <IndicatorRow key={d.id} def={d} count={counts.get(d.id) ?? 0} onAdd={addIndicator} />
+            <IndicatorRow key={d.id} def={d} on={added.has(d.id)} onToggle={toggle} />
           ))}
         </div>
       </div>
@@ -73,27 +76,44 @@ export function IndicatorsDialog({ onClose }: { onClose: () => void }): JSX.Elem
 
 function IndicatorRow({
   def,
-  count,
-  onAdd,
+  on,
+  onToggle,
 }: {
   def: (typeof INDICATOR_DEFS)[number];
-  count: number;
-  onAdd: (id: string) => void;
+  on: boolean;
+  onToggle: (id: string) => void;
 }): JSX.Element {
   return (
-    <button className="indicator-row" onClick={() => onAdd(def.id)}>
+    <button
+      className={`indicator-row ${on ? 'on' : ''}`}
+      onClick={() => onToggle(def.id)}
+      title={on ? `Remove ${def.name} from the chart` : `Add ${def.name} to the chart`}
+    >
       <span className="indicator-row-main">
         <span className="indicator-row-name">{def.name}</span>
         <span className="indicator-row-desc">{def.description}</span>
       </span>
+      {/* Two labels, one shown at a time: the state you are in, and what a
+          click would do. The second only appears on hover. */}
       <span className="indicator-row-action">
-        {count > 0 ? (
+        {on ? (
           <>
-            <Check size={14} />
-            {count > 1 ? ` ${count}` : ''}
+            <span className="row-state">
+              <Check size={14} /> Added
+            </span>
+            <span className="row-hint remove">
+              <Minus size={14} /> Remove
+            </span>
           </>
         ) : (
-          <Plus size={14} />
+          <>
+            <span className="row-state">
+              <Plus size={14} />
+            </span>
+            <span className="row-hint">
+              <Plus size={14} /> Add
+            </span>
+          </>
         )}
       </span>
     </button>

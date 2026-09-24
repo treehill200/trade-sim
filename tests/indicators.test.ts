@@ -3,6 +3,7 @@ import { CandleSeries } from '@/engine/series';
 import { ema, rma, rollingMax, rollingMin, rollingStdev, sma } from '@/indicators/math';
 import { INDICATOR_DEFS, indicatorDef } from '@/indicators/defs';
 import { defaultParams } from '@/indicators/types';
+import { useUi } from '@/state/store';
 
 function run(
   fn: (src: ArrayLike<number>, length: number, n: number, out: Float64Array) => void,
@@ -207,5 +208,76 @@ describe('indicator catalogue', () => {
         expect(p.default).toBeLessThanOrEqual(p.max);
       }
     }
+  });
+});
+
+describe('one indicator of each on the chart', () => {
+  /**
+   * Adding the same indicator twice used to stack a second copy directly over
+   * the first, which looked like a rendering fault and left two identical
+   * legend rows with no way to tell them apart.
+   */
+  const reset = (): void => {
+    useUi.setState({ indicators: [], paneRatios: {} });
+  };
+
+  it('adds an indicator once', () => {
+    reset();
+    useUi.getState().addIndicator('ema');
+    expect(useUi.getState().indicators).toHaveLength(1);
+  });
+
+  it('ignores a second add of the same indicator', () => {
+    reset();
+    useUi.getState().addIndicator('ema');
+    useUi.getState().addIndicator('ema');
+    useUi.getState().addIndicator('ema');
+    expect(useUi.getState().indicators).toHaveLength(1);
+  });
+
+  it('still allows different indicators alongside each other', () => {
+    reset();
+    for (const id of ['ema', 'sma', 'rsi', 'macd']) useUi.getState().addIndicator(id);
+    expect(useUi.getState().indicators.map((i) => i.defId)).toEqual(['ema', 'sma', 'rsi', 'macd']);
+  });
+
+  it('ignores an indicator that does not exist', () => {
+    reset();
+    useUi.getState().addIndicator('not-a-real-indicator');
+    expect(useUi.getState().indicators).toHaveLength(0);
+  });
+
+  it('removes by definition, so the dialog can toggle a row off', () => {
+    reset();
+    useUi.getState().addIndicator('rsi');
+    useUi.getState().addIndicator('macd');
+    useUi.getState().removeIndicatorByDef('rsi');
+    expect(useUi.getState().indicators.map((i) => i.defId)).toEqual(['macd']);
+  });
+
+  it('removing one that is not there changes nothing', () => {
+    reset();
+    useUi.getState().addIndicator('rsi');
+    useUi.getState().removeIndicatorByDef('atr');
+    expect(useUi.getState().indicators).toHaveLength(1);
+  });
+
+  it('adding after removing works, so a row can be toggled repeatedly', () => {
+    reset();
+    for (let i = 0; i < 3; i += 1) {
+      useUi.getState().addIndicator('bb');
+      expect(useUi.getState().indicators).toHaveLength(1);
+      useUi.getState().removeIndicatorByDef('bb');
+      expect(useUi.getState().indicators).toHaveLength(0);
+    }
+  });
+
+  it('drops the pane height along with the indicator', () => {
+    reset();
+    useUi.getState().addIndicator('rsi');
+    const id = useUi.getState().indicators[0]?.id as string;
+    useUi.getState().setPaneRatios({ [id]: 0.3 });
+    useUi.getState().removeIndicatorByDef('rsi');
+    expect(useUi.getState().paneRatios[id]).toBeUndefined();
   });
 });
